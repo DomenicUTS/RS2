@@ -1,0 +1,52 @@
+[2026-03-18 19:00:48,363] INFO: ============================================================
+[2026-03-18 19:00:48,363] INFO: UR3 SELFIE DRAWING ROBOT — Motion Planning Pipeline
+[2026-03-18 19:00:48,363] INFO: ============================================================
+[2026-03-18 19:00:48,363] INFO: Input:  13 raw strokes loaded
+[2026-03-18 19:00:48,363] INFO: Input:  1294 total waypoints
+[2026-03-18 19:00:48,364] INFO: [Scaling] Stroke bounds: X [279, 496], Y [107, 500]
+[2026-03-18 19:00:48,364] INFO: [Scaling] Stroke size: 217×393px, scale_factor: 0.724
+[2026-03-18 19:00:48,365] INFO: [Scaling] Rescaled to 72.4% to fit within canvas
+[2026-03-18 19:00:48,367] INFO: Input:  Raw travel distance: 1254.3 px
+
+[2026-03-18 19:00:48,367] INFO: [Optimise] Running Nearest-Neighbour sort...
+[2026-03-18 19:00:48,368] INFO: [NN Sort] 13 strokes | travel saved ≈ 605.0 px | time: 0.8 ms
+[2026-03-18 19:00:48,370] INFO: [Optimise] Running 2-opt local search refinement...
+[2026-03-18 19:00:48,429] INFO: [2-Opt] 50 iterations | travel saved ≈ -90.5 px | time: 58.4 ms
+[2026-03-18 19:00:48,429] INFO: [Result]  Optimised travel: 739.8 px (41.0% reduction)
+
+[2026-03-18 19:00:48,438] INFO: [Script] Generated (93950 bytes)
+[2026-03-18 19:00:48,438] INFO: 
+[Pipeline Complete] Total time: 0.075s
+[2026-03-18 19:00:48,438] INFO: ============================================================
+
+============================================================
+UR3 MOTION PLANNING PIPELINE
+============================================================
+
+✓ Loaded 13 strokes from 'outputs/strokes/face1_strokes.json'
+  Total waypoints: 1294
+
+[Debug Info]
+  Home position: [0.3, -0.225, 0.1]
+  Canvas origin: [0.35, -0.15, 0.01]
+  Canvas bounds X: [0.300, 0.600] m
+  Canvas bounds Y: [-0.350, -0.100] m
+============================================================
+
+
+============================================================
+EXECUTION SUMMARY
+============================================================
+
+  Strokes: 13 | Waypoints: 1294
+  Travel distance: 739.8 px (saved 41.0%)
+  NN time: 0.8ms | 2-Opt time: 58.4ms | Script time: 9.0ms
+        
+Total execution time: 0.075s
+============================================================
+
+[Connecting to Polyscope simulator...]
+[Robot] Connected to 192.168.56.101:30002
+[Sending drawing program to robot...]
+[Robot] Script sent (94065 bytes)
+[Ready to run! Click 'Play' in Polyscope to execute drawing.
