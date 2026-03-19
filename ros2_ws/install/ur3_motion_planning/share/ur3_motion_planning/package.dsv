@@ -1,0 +1,15 @@
+source;share/ur3_motion_planning/hook/path.ps1
+source;share/ur3_motion_planning/hook/path.dsv
+source;share/ur3_motion_planning/hook/path.sh
+source;share/ur3_motion_planning/hook/pythonpath.ps1
+source;share/ur3_motion_planning/hook/pythonpath.dsv
+source;share/ur3_motion_planning/hook/pythonpath.sh
+source;share/ur3_motion_planning/hook/pythonscriptspath.ps1
+source;share/ur3_motion_planning/hook/pythonscriptspath.dsv
+source;share/ur3_motion_planning/hook/pythonscriptspath.sh
+source;share/ur3_motion_planning/hook/ament_prefix_path.ps1
+source;share/ur3_motion_planning/hook/ament_prefix_path.dsv
+source;share/ur3_motion_planning/hook/ament_prefix_path.sh
+source;../../build/ur3_motion_planning/share/ur3_motion_planning/hook/pythonpath_develop.ps1
+source;../../build/ur3_motion_planning/share/ur3_motion_planning/hook/pythonpath_develop.dsv
+source;../../build/ur3_motion_planning/share/ur3_motion_planning/hook/pythonpath_develop.sh

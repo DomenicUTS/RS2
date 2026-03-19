@@ -1,0 +1,24 @@
+running develop
+running egg_info
+creating ur3_motion_planning.egg-info
+writing ur3_motion_planning.egg-info/PKG-INFO
+writing dependency_links to ur3_motion_planning.egg-info/dependency_links.txt
+writing entry points to ur3_motion_planning.egg-info/entry_points.txt
+writing requirements to ur3_motion_planning.egg-info/requires.txt
+writing top-level names to ur3_motion_planning.egg-info/top_level.txt
+writing manifest file 'ur3_motion_planning.egg-info/SOURCES.txt'
+reading manifest file 'ur3_motion_planning.egg-info/SOURCES.txt'
+writing manifest file 'ur3_motion_planning.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3-motion-planning.egg-link (link to .)
+Installing motion_planning_node script to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/bin
+
+Installed /home/domenic/RS2/ros2_ws/build/ur3_motion_planning
+running symlink_data
+creating /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ament_index
+creating /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ament_index/resource_index
+creating /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ament_index/resource_index/packages
+symbolically linking /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/resource/ur3_motion_planning -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ament_index/resource_index/packages
+symbolically linking /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/package.xml -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning
+creating /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning/launch
+symbolically linking /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/launch/ur3_motion_planning.launch.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning/launch

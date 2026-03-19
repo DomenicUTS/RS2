@@ -1,17 +1,8 @@
-#!/usr/bin/env python3
-"""
-Launch file for UR3 Motion Planning Node
-Team Picasso | Domenic Kadioglu
-
-Usage:
-  ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=192.168.56.101
-  ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=10.0.0.2 use_ros_control:=true
-"""
-
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, FindExecutable, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -40,7 +31,7 @@ def generate_launch_description():
         description='Enable path optimization (NN + 2-Opt)'
     )
     
-    # Create motion planning node
+    # Create motion planning node using cmd (works better with ament_python console_scripts)
     motion_planning_node = Node(
         package='ur3_motion_planning',
         executable='motion_planning_node',
@@ -48,7 +39,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'robot_ip': LaunchConfiguration('robot_ip')},
-            {'robot_port': int(LaunchConfiguration('robot_port'))},
+            {'robot_port': LaunchConfiguration('robot_port')},
             {'use_ros_control': LaunchConfiguration('use_ros_control')},
             {'optimization_enabled': LaunchConfiguration('optimization_enabled')},
         ],

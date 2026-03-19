@@ -1,0 +1,13 @@
+package.xml
+setup.py
+launch/ur3_motion_planning.launch.py
+resource/ur3_motion_planning
+ur3_motion_planning/__init__.py
+ur3_motion_planning/motion_planning_node.py
+ur3_motion_planning.egg-info/PKG-INFO
+ur3_motion_planning.egg-info/SOURCES.txt
+ur3_motion_planning.egg-info/dependency_links.txt
+ur3_motion_planning.egg-info/entry_points.txt
+ur3_motion_planning.egg-info/requires.txt
+ur3_motion_planning.egg-info/top_level.txt
+ur3_motion_planning.egg-info/zip-safe

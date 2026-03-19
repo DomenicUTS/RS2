@@ -24,12 +24,14 @@ from std_msgs.msg import String, Float64MultiArray
 from geometry_msgs.msg import Point, Pose, PoseArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-# Import existing motion planning functions (from parent module)
+# Import existing motion planning functions (from sibling src directory)
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+# Go up 4 levels: ur3_motion_planning/ur3_motion_planning/motion_planning_node.py → RS2/src/
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'src'))
+sys.path.insert(0, src_path)
 
-from src.ur3_selfie_draw import (
+from ur3_selfie_draw import (
     scale_strokes_to_workspace,
     nearest_neighbour_sort,
     two_opt_improve,

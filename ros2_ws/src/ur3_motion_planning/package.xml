@@ -12,13 +12,6 @@
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <depend>rclpy</depend>
-  <depend>geometry_msgs</depend>
-  <depend>sensor_msgs</depend>
-  <depend>trajectory_msgs</depend>
-  <depend>ur_msgs</depend>
-  <depend>std_msgs</depend>
-
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
