@@ -1,20 +1,84 @@
 # UR3 Selfie Drawing Robot - Motion Planning Pipeline
 
+**Team Picasso | Motion Planning Subsystem | Domenic Kadioglu**
+
+---
+
+## ⚡ NEW: ROS 2 Integration (Sprint 2)
+
+This project now includes a **ROS 2 Humble node** for system-level integration with Perception and GUI subsystems.
+
+### Architecture Overview
+```
+Perception (Nithish)        Motion Planning (YOU)         GUI (Mateusz)
+     ↓                            ↓                            ↓
+/stroke_paths topic → motion_planning_node → /urscript_program
+                            ↓
+                      ur_robot_driver / Polyscope
+                            ↓
+                        UR3 Robot
+```
+
+### Quick Start
+```bash
+# Build and test ROS 2 node
+cd ~/RS2/ros2_ws
+colcon build
+source install/setup.bash
+ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=192.168.56.101
+```
+
+**See [TESTING_AND_UR3_GUIDE.md](./TESTING_AND_UR3_GUIDE.md) for complete testing instructions.**
+
+### Key Features
+- ✓ Subscribes to `/stroke_paths` from Perception team
+- ✓ Generates optimized trajectories (NN + 2-Opt)
+- ✓ Publishes `/urscript_program` for execution
+- ✓ Publishes `/planning_status` for GUI feedback
+- ✓ Works with Polyscope simulator and real UR3
+- ✓ Original ur3_selfie_draw.py code unchanged (backward compatible)
+
+**Full documentation:** [ros2_ws/src/ur3_motion_planning/README.md](./ros2_ws/src/ur3_motion_planning/README.md)
+
+---
+
 ## Directory Structure
 
 ```
 /home/domenic/RS2/
-├── README.md                    # This file
-├── src/                         # Python scripts
-│   ├── svg_to_json_converter.py
-│   └── ur3_selfie_draw.py
-├── inputs/                      # Your SVG files go here
+├── README.md                                # This file
+├── TESTING_AND_UR3_GUIDE.md                 # Quick testing guide
+├── SPRINT2_TEST_PLAN.md                     # Test specifications
+├── SPRINT2_TEST_EVIDENCE.md                 # Test results
+├── SPRINT2_PRESENTATION.md                  # Presentation slides
+
+├── src/                                     # Original Python scripts
+│   ├── svg_to_json_converter.py             # SVG → JSON conversion
+│   └── ur3_selfie_draw.py                   # Motion planning (615 lines)
+
+├── ros2_ws/                                 # ROS 2 Workspace (NEW)
+│   ├── build/                               # Build outputs
+│   ├── install/                             # Installed packages
+│   └── src/
+│       └── ur3_motion_planning/             # Motion planning ROS 2 node
+│           ├── ur3_motion_planning/
+│           │   ├── motion_planning_node.py  # Main ROS 2 node
+│           │   └── __init__.py
+│           ├── launch/
+│           │   └── ur3_motion_planning.launch.py
+│           ├── package.xml
+│           ├── setup.py
+│           └── README.md                    # Full ROS 2 documentation
+
+├── inputs/                                  # Your SVG files
 │   └── face1.svg
-├── outputs/                     # Results
-│   ├── strokes/                 # JSON stroke data
+
+├── outputs/                                 # Generated results
+│   ├── strokes/                             # JSON stroke data
 │   │   └── face1_strokes.json
-│   └── verified/                # Verification SVGs
+│   └── verified/                            # Verification SVGs
 │       └── face1_verified.svg
+
 └── __pycache__/
 ```
 
