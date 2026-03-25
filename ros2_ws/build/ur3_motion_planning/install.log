@@ -2,10 +2,12 @@
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/add_table_simple.py
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/motion_planning_node_ros_services.py
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/motion_planning_node_moveit2.py
+/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/ur3_drawing_node.py
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__pycache__/__init__.cpython-310.pyc
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__pycache__/add_table_simple.cpython-310.pyc
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__pycache__/motion_planning_node_ros_services.cpython-310.pyc
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__pycache__/motion_planning_node_moveit2.cpython-310.pyc
+/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__pycache__/ur3_drawing_node.cpython-310.pyc
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ament_index/resource_index/packages/ur3_motion_planning
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning/package.xml
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning/launch/ur3_motion_planning_moveit2.launch.py
@@ -16,5 +18,4 @@
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info/SOURCES.txt
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info/entry_points.txt
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info/zip-safe
-/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/bin/add_table
 /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/bin/motion_planning_node

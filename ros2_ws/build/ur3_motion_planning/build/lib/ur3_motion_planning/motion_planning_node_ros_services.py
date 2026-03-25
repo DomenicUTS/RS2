@@ -8,8 +8,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseArray, Pose, Point, PoseStamped, Quaternion
 from std_msgs.msg import String
-from moveit_msgs.srv import GetPlanningScene, MotionPlanRequest
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from moveit_msgs.srv import GetPlanningScene
 import numpy as np
 import time
 import json
