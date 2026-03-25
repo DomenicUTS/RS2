@@ -13,3 +13,4 @@ resource/ur3_motion_planning
 ur3_motion_planning/__init__.py
 ur3_motion_planning/add_table_simple.py
 ur3_motion_planning/motion_planning_node_moveit2.py
+ur3_motion_planning/motion_planning_node_ros_services.py
