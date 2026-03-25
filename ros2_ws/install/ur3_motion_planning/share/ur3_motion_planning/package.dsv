@@ -10,6 +10,3 @@ source;share/ur3_motion_planning/hook/pythonscriptspath.sh
 source;share/ur3_motion_planning/hook/ament_prefix_path.ps1
 source;share/ur3_motion_planning/hook/ament_prefix_path.dsv
 source;share/ur3_motion_planning/hook/ament_prefix_path.sh
-source;../../build/ur3_motion_planning/share/ur3_motion_planning/hook/pythonpath_develop.ps1
-source;../../build/ur3_motion_planning/share/ur3_motion_planning/hook/pythonpath_develop.dsv
-source;../../build/ur3_motion_planning/share/ur3_motion_planning/hook/pythonpath_develop.sh

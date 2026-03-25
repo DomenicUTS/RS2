@@ -32,7 +32,7 @@ ROBOT_PORT = 30002             # Primary interface (URScript)
 
 # Robot draw plane (world coords in metres, z = table surface)
 # Pre-calibrated: top-left corner of canvas in robot base frame
-CANVAS_ORIGIN_ROBOT = np.array([0.350, -0.150, 0.010])   # (x, y, z) metres
+CANVAS_ORIGIN_ROBOT = np.array([0.350, -0.150, 0.010])   # (x, y, z) metres — drawing surface at table
 CANVAS_WIDTH_M      = 0.200    # 20 cm canvas
 CANVAS_HEIGHT_M     = 0.150    # 15 cm canvas
 
@@ -41,18 +41,18 @@ CANVAS_PX_W = 400
 CANVAS_PX_H = 300
 
 # Z heights
-Z_DRAW    = CANVAS_ORIGIN_ROBOT[2]          # pen-down
-Z_TRAVEL  = CANVAS_ORIGIN_ROBOT[2] + 0.050  # pen-up (50 mm above)
+Z_DRAW    = CANVAS_ORIGIN_ROBOT[2]          # pen-down (at table surface)
+Z_TRAVEL  = CANVAS_ORIGIN_ROBOT[2] + 0.200  # pen-up (20cm above table for joint clearance)
 
 # Safe home position (close to canvas, definitely reachable by UR3)
 # This is positioned above the center of the canvas
-HOME_POS = np.array([0.300, -0.225, 0.100])  # 30cm away, slightly back, 10cm up
+HOME_POS = np.array([0.300, -0.225, 0.250])  # 30cm away, slightly back, 25cm up (high clearance)
 
 # Motion params
-JOINT_ACCEL  = 1.4   # rad/s²  (faster for simulator)
-JOINT_VEL    = 1.05  # rad/s   (faster for simulator)
-LINEAR_ACCEL = 0.5   # m/s²
-LINEAR_VEL   = 0.08  # m/s  (drawing speed)
+JOINT_ACCEL  = 0.5   # rad/s²  (faster for simulator)
+JOINT_VEL    = 0.5  # rad/s   (faster for simulator)
+LINEAR_ACCEL = 0.3  # m/s²
+LINEAR_VEL   = 0.05  # m/s  (drawing speed)
 
 # Fixed wrist orientation (pen pointing straight down)
 # Rx, Ry, Rz in axis-angle (radians)

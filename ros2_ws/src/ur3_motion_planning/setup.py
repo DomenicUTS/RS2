@@ -11,7 +11,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch',
-            ['launch/ur3_motion_planning.launch.py']),
+            ['launch/ur3_motion_planning.launch.py',
+             'launch/ur3_motion_planning_moveit2.launch.py']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'motion_planning_node = ur3_motion_planning.motion_planning_node:main',
+            'motion_planning_node_moveit2 = ur3_motion_planning.motion_planning_node_moveit2:main',
         ],
     },
 )

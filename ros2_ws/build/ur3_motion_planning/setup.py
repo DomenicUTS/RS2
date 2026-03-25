@@ -1,1 +1,0 @@
-/home/domenic/RS2/ros2_ws/src/ur3_motion_planning/setup.py
