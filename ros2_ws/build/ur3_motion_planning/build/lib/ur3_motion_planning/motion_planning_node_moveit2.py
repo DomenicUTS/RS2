@@ -64,12 +64,18 @@ class UR3MotionPlanningNode(Node):
         """Add table as collision object to prevent robot self-collision."""
         table_pose = PoseStamped()
         table_pose.header.frame_id = "world"
-        table_pose.pose.position.x = 0.5  # Center of table
+        table_pose.pose.position.x = 0.0
         table_pose.pose.position.y = 0.0
-        table_pose.pose.position.z = -0.05  # Slightly below robot base
+        table_pose.pose.position.z = -0.07
         
-        # Table dimensions (adjust based on physical table)
-        table_size = [1.0, 1.0, 0.1]  # length, width, height (meters)
+        # Table dimensions: 1.7m x 1.7m x 0.2m
+        table_size = [1.7, 1.7, 0.2]  # length, width, height (meters)
+        
+        # Rotation: 0, 0, 0 (identity quaternion)
+        table_pose.pose.orientation.x = 0.0
+        table_pose.pose.orientation.y = 0.0
+        table_pose.pose.orientation.z = 0.0
+        table_pose.pose.orientation.w = 1.0
         
         collision_object = CollisionObject()
         collision_object.id = "table"
@@ -84,7 +90,7 @@ class UR3MotionPlanningNode(Node):
         collision_object.operation = CollisionObject.ADD
         
         self.planning_scene.add_object(collision_object)
-        self.get_logger().info(f"[Planning Scene] Table collision object added")
+        self.get_logger().info(f"[Planning Scene] Table collision object added (1.7×1.7×0.2m at z=-0.07)")
     
     def stroke_callback(self, msg: PoseArray):
         """Handle incoming stroke paths."""
