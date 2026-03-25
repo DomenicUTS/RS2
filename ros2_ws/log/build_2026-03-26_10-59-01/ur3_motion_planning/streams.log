@@ -1,0 +1,28 @@
+[0.578s] Invoking command in '/home/domenic/RS2/ros2_ws/src/ur3_motion_planning': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/ur3_motion_planning build --build-base /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build install --record /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log --single-version-externally-managed install_data
+[0.800s] running egg_info
+[0.801s] writing ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/PKG-INFO
+[0.801s] writing dependency_links to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/dependency_links.txt
+[0.801s] writing entry points to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/entry_points.txt
+[0.801s] writing requirements to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/requires.txt
+[0.801s] writing top-level names to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/top_level.txt
+[0.802s] reading manifest file '../../build/ur3_motion_planning/ur3_motion_planning.egg-info/SOURCES.txt'
+[0.803s] writing manifest file '../../build/ur3_motion_planning/ur3_motion_planning.egg-info/SOURCES.txt'
+[0.803s] running build
+[0.803s] running build_py
+[0.803s] copying ur3_motion_planning/__init__.py -> /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning
+[0.804s] copying ur3_motion_planning/ur3_drawing_node.py -> /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning
+[0.804s] running install
+[0.804s] running install_lib
+[0.805s] copying /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning/__init__.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning
+[0.805s] copying /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning/ur3_drawing_node.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning
+[0.805s] byte-compiling /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__init__.py to __init__.cpython-310.pyc
+[0.806s] byte-compiling /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/ur3_drawing_node.py to ur3_drawing_node.cpython-310.pyc
+[0.809s] running install_data
+[0.809s] copying package.xml -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning
+[0.809s] running install_egg_info
+[0.812s] removing '/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info' (and everything under it)
+[0.812s] Copying ../../build/ur3_motion_planning/ur3_motion_planning.egg-info to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info
+[0.813s] running install_scripts
+[0.832s] Installing motion_planning_node script to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/bin
+[0.832s] writing list of installed files to '/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log'
+[0.854s] Invoked command in '/home/domenic/RS2/ros2_ws/src/ur3_motion_planning' returned '0': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/ur3_motion_planning build --build-base /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build install --record /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log --single-version-externally-managed install_data

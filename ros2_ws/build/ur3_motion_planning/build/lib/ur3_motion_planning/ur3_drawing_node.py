@@ -28,7 +28,7 @@ import math
 import sys
 from typing import List, Tuple
 
-# Try to import ur3_selfie_draw for optimization
+# Try to import ur3_selfie_draw for optimization and execution
 try:
     sys.path.insert(0, os.path.expanduser("~/RS2/src"))
     from ur3_selfie_draw import (
@@ -36,6 +36,8 @@ try:
         two_opt_improve,
         px_to_robot,
         validate_pose,
+        build_urscript,
+        UR3Controller,
         Metrics,
         CANVAS_ORIGIN_ROBOT,
         CANVAS_PX_W,
@@ -159,7 +161,7 @@ class UR3DrawingNode(Node):
             
             # Stage 5: Execute
             self._publish_status("EXECUTING")
-            success = self._execute_trajectory(trajectory)
+            success = self._execute_trajectory(trajectory, strokes_opt)
             
             if success:
                 self._publish_status("COMPLETE")
@@ -283,16 +285,22 @@ class UR3DrawingNode(Node):
             self.get_logger().error(f"[Plan] Planning failed: {e}")
             return None
     
-    def _execute_trajectory(self, trajectory: JointTrajectory) -> bool:
+    def _execute_trajectory(self, trajectory: JointTrajectory, strokes: List = None) -> bool:
         """Stage 5: Execute trajectory on real robot or simulator."""
         try:
             # Check if action server is available
             if not self.trajectory_client.wait_for_server(timeout_sec=2.0):
                 self.get_logger().warn("[Execute] Trajectory action server not available")
-                self.get_logger().info("[Execute] Trajectory would be sent to robot if server available")
-                return True  # Don't fail if server missing (testing mode)
+                
+                # Fallback: Generate URScript and send via socket
+                if OPTIMIZATION_AVAILABLE and strokes:
+                    self.get_logger().info("[Execute] Falling back to URScript generation...")
+                    return self._execute_via_urscript(strokes)
+                else:
+                    self.get_logger().info("[Execute] Trajectory would be sent to robot if server available")
+                    return True  # Don't fail in test mode
             
-            # Send trajectory
+            # Send trajectory via action server
             goal = FollowJointTrajectory.Goal()
             goal.trajectory = trajectory
             
@@ -311,6 +319,49 @@ class UR3DrawingNode(Node):
                 
         except Exception as e:
             self.get_logger().error(f"[Execute] Failed: {e}")
+            return False
+    
+    def _execute_via_urscript(self, strokes: List) -> bool:
+        """
+        Generate URScript from optimized strokes and execute via socket.
+        Fallback when action server is not available.
+        """
+        try:
+            self.get_logger().info(f"[URScript] Generating URScript from {len(strokes)} strokes...")
+            
+            # Build URScript from strokes
+            script, validation_errors = build_urscript(strokes)
+            
+            if validation_errors:
+                self.get_logger().warn(f"[URScript] Validation warnings: {len(validation_errors)}")
+                for err in validation_errors[:5]:  # Show first 5
+                    self.get_logger().warn(f"  - {err}")
+            
+            # Connect and send to robot
+            self.get_logger().info(f"[URScript] Connecting to robot at {self.robot_ip}:{self.robot_port}...")
+            controller = UR3Controller(ip=self.robot_ip, port=self.robot_port)
+            
+            if not controller.connect():
+                self.get_logger().warn("[URScript] Could not connect to robot - saving script only")
+                # Save to file for manual execution
+                timestamp = int(time.time())
+                script_file = f"/tmp/face1_drawing_{timestamp}.script"
+                with open(script_file, 'w') as f:
+                    f.write(script)
+                self.get_logger().info(f"[URScript] Script saved to {script_file}")
+                return True  # Don't fail
+            
+            # Send script
+            self.get_logger().info("[URScript] Sending script to robot...")
+            controller.send_script(script)
+            
+            self.get_logger().info("[URScript] ✓ Script sent successfully!")
+            self.get_logger().info("[URScript] Execute in Polyscope to draw")
+            
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f"[URScript] Failed: {e}", exc_info=True)
             return False
     
     # ──────────────────────────────────────────────────────────────
