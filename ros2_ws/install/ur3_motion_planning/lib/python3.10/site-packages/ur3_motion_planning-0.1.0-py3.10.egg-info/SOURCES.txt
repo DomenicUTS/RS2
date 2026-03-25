@@ -11,4 +11,5 @@ setup.py
 launch/ur3_motion_planning_moveit2.launch.py
 resource/ur3_motion_planning
 ur3_motion_planning/__init__.py
+ur3_motion_planning/add_table_simple.py
 ur3_motion_planning/motion_planning_node_moveit2.py

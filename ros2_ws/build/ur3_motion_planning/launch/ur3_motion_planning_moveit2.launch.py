@@ -1,0 +1,1 @@
+/home/domenic/RS2/ros2_ws/src/ur3_motion_planning/launch/ur3_motion_planning_moveit2.launch.py

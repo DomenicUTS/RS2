@@ -3,6 +3,4 @@
 __version__ = '0.1.0'
 __author__ = 'Domenic Kadioglu'
 
-from .motion_planning_node import MotionPlanningNode
-
-__all__ = ['MotionPlanningNode']
+__all__ = []

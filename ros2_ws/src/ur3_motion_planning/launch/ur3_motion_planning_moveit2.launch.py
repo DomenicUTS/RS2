@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Launch file for UR3 Motion Planning with MoveIt2
+Launch file for UR3 Motion Planning with MoveIt2 (All-in-One)
+Starts MoveIt2 + RViz + Motion Planning Node in single command
 """
 
 from launch import LaunchDescription
@@ -53,26 +54,10 @@ def generate_launch_description():
         }.items(),
     )
     
-    # Motion planning node
-    motion_planning_node = Node(
-        package='ur3_motion_planning',
-        executable='motion_planning_node',
-        name='ur3_motion_planning_node',
-        output='screen',
-        parameters=[
-            {
-                'robot_ip': LaunchConfiguration('robot_ip'),
-                'robot_port': 30002,
-                'use_ros_control': False,
-                'optimization_enabled': True,
-            }
-        ],
-    )
-    
     ld = LaunchDescription(declared_arguments)
     ld.add_action(ur_moveit_launch)
-    ld.add_action(motion_planning_node)
     
     return ld
+
 
 

@@ -1,0 +1,35 @@
+[0.576s] Invoking command in '/home/domenic/RS2/ros2_ws/build/ur3_motion_planning': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build
+[0.823s] running develop
+[0.981s] Removing /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3-motion-planning.egg-link (link to .)
+[1.007s] Invoked command in '/home/domenic/RS2/ros2_ws/build/ur3_motion_planning' returned '0': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build
+[1.008s] Invoking command in '/home/domenic/RS2/ros2_ws/src/ur3_motion_planning': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/ur3_motion_planning build --build-base /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build install --record /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log --single-version-externally-managed install_data --force
+[1.225s] running egg_info
+[1.226s] writing ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/PKG-INFO
+[1.226s] writing dependency_links to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/dependency_links.txt
+[1.226s] writing entry points to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/entry_points.txt
+[1.227s] writing requirements to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/requires.txt
+[1.227s] writing top-level names to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/top_level.txt
+[1.228s] reading manifest file '../../build/ur3_motion_planning/ur3_motion_planning.egg-info/SOURCES.txt'
+[1.229s] writing manifest file '../../build/ur3_motion_planning/ur3_motion_planning.egg-info/SOURCES.txt'
+[1.229s] running build
+[1.229s] running build_py
+[1.229s] copying ur3_motion_planning/add_table_simple.py -> /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning
+[1.230s] running install
+[1.230s] running install_lib
+[1.231s] copying /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning/__init__.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning
+[1.231s] copying /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning/add_table_simple.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning
+[1.231s] copying /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning/motion_planning_node_moveit2.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning
+[1.231s] byte-compiling /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__init__.py to __init__.cpython-310.pyc
+[1.232s] byte-compiling /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/add_table_simple.py to add_table_simple.cpython-310.pyc
+[1.232s] byte-compiling /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/motion_planning_node_moveit2.py to motion_planning_node_moveit2.cpython-310.pyc
+[1.233s] running install_data
+[1.233s] copying resource/ur3_motion_planning -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ament_index/resource_index/packages
+[1.234s] copying package.xml -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning
+[1.234s] copying launch/ur3_motion_planning_moveit2.launch.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/share/ur3_motion_planning/launch
+[1.234s] running install_egg_info
+[1.236s] Copying ../../build/ur3_motion_planning/ur3_motion_planning.egg-info to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info
+[1.237s] running install_scripts
+[1.255s] Installing add_table script to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/bin
+[1.255s] Installing motion_planning_node script to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/bin
+[1.256s] writing list of installed files to '/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log'
+[1.277s] Invoked command in '/home/domenic/RS2/ros2_ws/src/ur3_motion_planning' returned '0': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/ur3_motion_planning build --build-base /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build install --record /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log --single-version-externally-managed install_data --force

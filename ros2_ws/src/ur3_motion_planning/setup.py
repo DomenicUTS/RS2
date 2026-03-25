@@ -22,6 +22,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'add_table = ur3_motion_planning.add_table_simple:main',
             'motion_planning_node = ur3_motion_planning.motion_planning_node_moveit2:main',
         ],
     },
