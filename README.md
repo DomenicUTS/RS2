@@ -1,44 +1,40 @@
-# UR3 Selfie Drawing Robot - Motion Planning Pipeline
+# UR3 Selfie Drawing Robot - Motion Planning Subsystem
 
-**Team Picasso | Motion Planning Subsystem | Domenic Kadioglu**
+**Team Picasso | Robotics Studio 2 | UTS**
 
 ---
 
-## ⚡ NEW: ROS 2 Integration (Sprint 2)
+## Overview
 
-This project now includes a **ROS 2 Humble node** for system-level integration with Perception and GUI subsystems.
+This package implements the motion planning subsystem for the UR3 Selfie-Drawing Robot. The system converts SVG drawings into optimized robot trajectories using a Nearest-Neighbor Traveling Salesman Problem solver combined with 2-Opt local search refinement. The motion planning logic integrates with a ROS 2 middleware layer to enable system-level coordination with the Perception and GUI subsystems.
 
-### Architecture Overview
+**Key Capabilities:**
+- Trajectory generation with 30-41% travel optimization
+- ROS 2 Humble integration for subsystem communication
+- Direct UR3 control via URScript over TCP/IP
+- Polyscope simulator compatibility
+- Real robot deployment support
+
+---
+
+## System Architecture
+
 ```
-Perception (Nithish)        Motion Planning (YOU)         GUI (Mateusz)
-     ↓                            ↓                            ↓
-/stroke_paths topic → motion_planning_node → /urscript_program
-                            ↓
-                      ur_robot_driver / Polyscope
-                            ↓
-                        UR3 Robot
+Perception Subsystem          Motion Planning Subsystem        GUI Subsystem
+(Stroke Detection)            (Trajectory Generation)          (Status Display)
+        ↓                                 ↓                            ↓
+  /stroke_paths              motion_planning_node            /planning_status
+  (PoseArray)                       (ROS 2 Node)             (String Status)
+        ↓                                 ↓                            ↓
+        └─────────────────────────────────────────────────────────────┘
+                                         ↓
+                              /urscript_program
+                              (std_msgs/String)
+                                         ↓
+                        UR Robot Driver / Polyscope
+                                         ↓
+                                    UR3 Robot
 ```
-
-### Quick Start
-```bash
-# Build and test ROS 2 node
-cd ~/RS2/ros2_ws
-colcon build
-source install/setup.bash
-ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=192.168.56.101
-```
-
-**See [TESTING_AND_UR3_GUIDE.md](./TESTING_AND_UR3_GUIDE.md) for complete testing instructions.**
-
-### Key Features
-- ✓ Subscribes to `/stroke_paths` from Perception team
-- ✓ Generates optimized trajectories (NN + 2-Opt)
-- ✓ Publishes `/urscript_program` for execution
-- ✓ Publishes `/planning_status` for GUI feedback
-- ✓ Works with Polyscope simulator and real UR3
-- ✓ Original ur3_selfie_draw.py code unchanged (backward compatible)
-
-**Full documentation:** [ros2_ws/src/ur3_motion_planning/README.md](./ros2_ws/src/ur3_motion_planning/README.md)
 
 ---
 
@@ -46,57 +42,238 @@ ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=192.168.
 
 ```
 /home/domenic/RS2/
-├── README.md                                # This file
-├── TESTING_AND_UR3_GUIDE.md                 # Quick testing guide
-├── SPRINT2_TEST_PLAN.md                     # Test specifications
-├── SPRINT2_TEST_EVIDENCE.md                 # Test results
-├── SPRINT2_PRESENTATION.md                  # Presentation slides
+├── README.md                          # Project overview (this file)
+├── TESTING_AND_UR3_GUIDE.md          # Testing procedures and real robot setup
+├── SPRINT2_TEST_PLAN.md              # Test specifications and criteria
+├── SPRINT2_TEST_EVIDENCE.md          # Test execution results and metrics
+├── SPRINT2_PRESENTATION.md           # Sprint 2 deliverable presentation
 
-├── src/                                     # Original Python scripts
-│   ├── svg_to_json_converter.py             # SVG → JSON conversion
-│   └── ur3_selfie_draw.py                   # Motion planning (615 lines)
+├── src/                               # Motion planning core library
+│   ├── ur3_selfie_draw.py            # Main trajectory generation (615 lines)
+│   └── svg_to_json_converter.py      # SVG to stroke format conversion
 
-├── ros2_ws/                                 # ROS 2 Workspace (NEW)
-│   ├── build/                               # Build outputs
-│   ├── install/                             # Installed packages
-│   └── src/
-│       └── ur3_motion_planning/             # Motion planning ROS 2 node
-│           ├── ur3_motion_planning/
-│           │   ├── motion_planning_node.py  # Main ROS 2 node
-│           │   └── __init__.py
-│           ├── launch/
-│           │   └── ur3_motion_planning.launch.py
-│           ├── package.xml
-│           ├── setup.py
-│           └── README.md                    # Full ROS 2 documentation
+├── ros2_ws/                           # ROS 2 workspace
+│   ├── build/                         # Colcon build artifacts
+│   ├── install/                       # Installed binaries and libraries
+│   └── src/ur3_motion_planning/       # Motion planning ROS 2 package
+│       ├── ur3_motion_planning/
+│       │   ├── motion_planning_node.py        # ROS 2 node implementation
+│       │   └── __init__.py
+│       ├── launch/
+│       │   └── ur3_motion_planning.launch.py  # Node launch configuration
+│       ├── package.xml                        # Package dependencies
+│       ├── setup.py                           # Package build configuration
+│       └── README.md                           # ROS 2 node documentation
 
-├── inputs/                                  # Your SVG files
+├── inputs/                            # Input SVG drawings
 │   └── face1.svg
 
-├── outputs/                                 # Generated results
-│   ├── strokes/                             # JSON stroke data
-│   │   └── face1_strokes.json
-│   └── verified/                            # Verification SVGs
-│       └── face1_verified.svg
+├── outputs/                           # Generated outputs
+│   ├── strokes/                       # Stroke data in JSON format
+│   │   ├── face1_strokes.json
+│   │   ├── face2_strokes.json
+│   │   └── face3_strokes.json
+│   └── verified/                      # Verification SVG reconstructions
+│       ├── face1_verified.svg
+│       ├── face2_verified.svg
+│       └── face3_verified.svg
 
-└── __pycache__/
+├── test1_logs/                        # Test execution logs
+
+└── run_test_suite.sh                  # Automated test runner
 ```
-
-## Overview
-
-Complete workflow for converting hand-drawn faces into UR3 robot drawing trajectories.
-
-**Process:**
-1. Draw on online editor → Export SVG to `inputs/`
-2. SVG → JSON stroke converter (with verification)
-3. Motion planning optimization
-4. Performance timing analysis
 
 ---
 
-## Step-by-Step Workflow
+## System Requirements
 
-### Step 1: Draw Your Image
+### Software
+- **OS:** Ubuntu 20.04 LTS or later
+- **ROS 2:** Humble distribution
+- **Python:** 3.8 or later
+- **Dependencies:** NumPy, rclpy, geometry_msgs, std_msgs
+
+### Hardware (for real robot testing)
+- **UR3 Robot:** Connected to LAN
+- **Network:** Direct network connectivity to UR3 (Ethernet or WiFi)
+- **Compute:** Standard desktop/laptop with Python environment
+
+---
+
+## Installation
+
+### 1. Prerequisites Setup
+
+Install ROS 2 Humble:
+```bash
+sudo apt update
+sudo apt install ros-humble-desktop
+source /opt/ros/humble/setup.bash
+```
+
+Install UR ROS 2 driver:
+```bash
+sudo apt-get install ros-humble-ur
+```
+
+Install Python dependencies:
+```bash
+pip install numpy rclpy
+```
+
+### 2. Build Motion Planning Package
+
+```bash
+cd ~/RS2/ros2_ws
+colcon build
+source install/setup.bash
+```
+
+---
+
+## Quick Start
+
+### Simulator Testing
+
+```bash
+# Terminal 1: Start Polyscope simulator
+ros2 run ur_client_library start_ursim.sh -m ur3
+
+# Terminal 2: Launch motion planning node
+cd ~/RS2/ros2_ws
+source install/setup.bash
+ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=192.168.56.101
+
+# Terminal 3: Publish test strokes
+cd ~/RS2
+source ros2_ws/install/setup.bash
+python3 -c "
+import json
+import rclpy
+from geometry_msgs.msg import PoseArray, Pose, Point
+
+rclpy.init()
+node = rclpy.create_node('test_publisher')
+pub = node.create_publisher(PoseArray, 'stroke_paths', 10)
+
+with open('outputs/strokes/face1_strokes.json') as f:
+    strokes = json.load(f)
+
+msg = PoseArray()
+msg.header.frame_id = 'canvas'
+for stroke in strokes[:3]:
+    for x, y in stroke[:50]:
+        pose = Pose()
+        pose.position = Point(x=float(x), y=float(y), z=0.0)
+        msg.poses.append(pose)
+
+pub.publish(msg)
+rclpy.shutdown()
+"
+```
+
+### Real Robot Deployment
+
+```bash
+# Deploy to real UR3 at IP 10.0.0.2
+ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=10.0.0.2 use_ros_control:=false
+```
+
+---
+
+## Usage
+
+### Command-Line Execution
+
+Direct trajectory generation without ROS 2:
+
+```bash
+python3 src/ur3_selfie_draw.py --ip 192.168.56.101 --svg inputs/face1.svg
+```
+
+### Programmatic Integration
+
+```python
+from ur3_selfie_draw import UR3Controller, build_urscript, nearest_neighbour_sort
+
+controller = UR3Controller("192.168.56.101", 30002)
+strokes = load_strokes_from_json("outputs/strokes/face1_strokes.json")
+optimized = nearest_neighbour_sort(strokes)
+script = build_urscript(optimized, LINEAR_VEL=0.08)
+controller.send_script(script)
+```
+
+---
+
+## Performance Characteristics
+
+**Trajectory Optimization:**
+- Nearest-Neighbor Sort: 30-41% travel reduction
+- 2-Opt refinement: 50 iterations maximum
+- Pipeline execution time: 75-134 milliseconds
+
+**Motion Parameters (Configurable):**
+- Linear velocity: 0.05-0.25 m/s (drawing speed)
+- Linear acceleration: 0.3-0.8 m/s²
+- Joint velocity: 0.5-1.4 rad/s
+- Joint acceleration: 0.5-1.2 rad/s²
+
+**Tested Configurations:**
+- Canvas size: Up to 300×300mm
+- Maximum waypoints: 2000+ per stroke
+- Multiple strokes per execution
+
+---
+
+## Documentation
+
+**Detailed references:**
+- [ROS 2 Node Documentation](./ros2_ws/src/ur3_motion_planning/README.md) - ROS 2-specific configuration and interfaces
+- [Testing and UR3 Setup Guide](./TESTING_AND_UR3_GUIDE.md) - Comprehensive testing procedures
+- [Sprint 2 Test Plan](./SPRINT2_TEST_PLAN.md) - Test specifications and acceptance criteria
+- [Sprint 2 Evidence](./SPRINT2_TEST_EVIDENCE.md) - Test execution results with quantitative metrics
+- [Sprint 2 Presentation](./SPRINT2_PRESENTATION.md) - Project deliverable presentation outline
+
+---
+
+## Troubleshooting
+
+**Build fails with colcon:**
+- Ensure ROS 2 Humble is sourced: `source /opt/ros/humble/setup.bash`
+- Clean build: `colcon clean workspace && colcon build`
+- Verify package.xml has no redundant dependencies
+
+**Node fails to connect to robot:**
+- Test connectivity: `ping <robot_ip>`
+- Verify port 30002 is accessible: `nc -zv <robot_ip> 30002`
+- Check robot network configuration
+
+**Import errors in motion_planning_node:**
+- Ensure RS2/src directory is in Python path
+- Rebuild ROS 2 package: `colcon build --packages-select ur3_motion_planning`
+
+---
+
+## References
+
+**Related Subsystems:**
+- Perception: SVG/image analysis to stroke detection
+- GUI: Real-time status and parameter visualization
+- UR Robot Driver: Hardware communication layer
+
+**Key References:**
+- UR3 Technical Specifications
+- ROS 2 Humble Documentation
+- URScript Programming Guide
+
+---
+
+## Contributors
+
+**Team Picasso - Robotics Studio 2**
+- Motion Planning: Domenic Kadioglu
+- Perception: Nithish (Team Member)
+- GUI: Mateusz (Team Member)
 
 Use **[method.ac](https://editor.method.ac/)** online SVG editor:
 - Simple interface: click and draw
