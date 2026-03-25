@@ -172,7 +172,7 @@ class UR3DrawingNode(Node):
             lines.append("")
         
         # Return home
-        lines.append("  movel({self._pose_str(self.HOME_POS, self.TOOL_ORIENT)},")
+        lines.append(f"  movel({self._pose_str(self.HOME_POS, self.TOOL_ORIENT)},")
         lines.append(f"         a={self.LINEAR_ACCEL}, v={self.LINEAR_VEL})")
         lines.append("end")
         lines.append("")

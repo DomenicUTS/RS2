@@ -1,0 +1,27 @@
+[0.559s] Invoking command in '/home/domenic/RS2/ros2_ws/src/ur3_motion_planning': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/ur3_motion_planning build --build-base /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build install --record /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log --single-version-externally-managed install_data
+[0.773s] running egg_info
+[0.773s] writing ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/PKG-INFO
+[0.773s] writing dependency_links to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/dependency_links.txt
+[0.773s] writing entry points to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/entry_points.txt
+[0.774s] writing requirements to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/requires.txt
+[0.774s] writing top-level names to ../../build/ur3_motion_planning/ur3_motion_planning.egg-info/top_level.txt
+[0.775s] reading manifest file '../../build/ur3_motion_planning/ur3_motion_planning.egg-info/SOURCES.txt'
+[0.776s] writing manifest file '../../build/ur3_motion_planning/ur3_motion_planning.egg-info/SOURCES.txt'
+[0.776s] running build
+[0.776s] running build_py
+[0.776s] copying ur3_motion_planning/__init__.py -> /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning
+[0.776s] copying ur3_motion_planning/ur3_drawing_node.py -> /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning
+[0.776s] running install
+[0.777s] running install_lib
+[0.777s] copying /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning/__init__.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning
+[0.778s] copying /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build/lib/ur3_motion_planning/ur3_drawing_node.py -> /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning
+[0.778s] byte-compiling /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/__init__.py to __init__.cpython-310.pyc
+[0.778s] byte-compiling /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning/ur3_drawing_node.py to ur3_drawing_node.cpython-310.pyc
+[0.780s] running install_data
+[0.780s] running install_egg_info
+[0.783s] removing '/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info' (and everything under it)
+[0.783s] Copying ../../build/ur3_motion_planning/ur3_motion_planning.egg-info to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages/ur3_motion_planning-0.1.0-py3.10.egg-info
+[0.784s] running install_scripts
+[0.801s] Installing motion_planning_node script to /home/domenic/RS2/ros2_ws/install/ur3_motion_planning/bin
+[0.802s] writing list of installed files to '/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log'
+[0.823s] Invoked command in '/home/domenic/RS2/ros2_ws/src/ur3_motion_planning' returned '0': PYTHONPATH=/home/domenic/RS2/ros2_ws/build/ur3_motion_planning/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/domenic/RS2/ros2_ws/install/ur3_motion_planning/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/ur3_motion_planning build --build-base /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/build install --record /home/domenic/RS2/ros2_ws/build/ur3_motion_planning/install.log --single-version-externally-managed install_data
