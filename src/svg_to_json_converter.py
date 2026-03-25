@@ -233,7 +233,7 @@ def main():
     import os
     
     # Use relative paths from parent directory
-    svg_name = 'face1'  # Will look for face1.svg in inputs/
+    svg_name = 'face3'  # Will look for face1.svg in inputs/
     svg_input = f'inputs/{svg_name}.svg'
     json_output = f'outputs/strokes/{svg_name}_strokes.json'
     svg_verify = f'outputs/verified/{svg_name}_verified.svg'

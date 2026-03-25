@@ -62,13 +62,23 @@ TOOL_ORIENT = [math.pi, 0.0, 0.0]
 #  LOGGING & METRICS
 # ──────────────────────────────────────────────
 
-# Configure logging for console output only
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s',
-    handlers=[logging.StreamHandler()]
-)
+# Configure logging (will be updated dynamically in main)
 logger = logging.getLogger("MotionPlanning")
+
+def setup_logging(face_name, run_number):
+    """Configure logging with dynamic filename based on face and run number."""
+    log_file = f'test_run_{face_name}_{run_number}.log'
+    
+    # Remove any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Add new handlers
+    logger.addHandler(logging.StreamHandler())
+    logger.addHandler(logging.FileHandler(log_file))
+    logger.setLevel(logging.INFO)
+    
+    return log_file
 
 class Metrics:
     """Track subsystem performance metrics for test evidence."""
@@ -568,15 +578,36 @@ if __name__ == "__main__":
     2. Export as SVG → place in inputs/
     3. python3 src/svg_to_json_converter.py
        (creates JSON in outputs/strokes/)
-    4. python3 src/ur3_selfie_draw.py
+    4. python3 src/ur3_selfie_draw.py [face_num] [run_num]
+    
+    Arguments (optional):
+    - face_num: 1, 2, or 3 (default: 3)
+    - run_num: test run number (default: 1)
     """
     
-    # Load strokes from JSON file in outputs/strokes/ folder
-    json_file = 'outputs/strokes/face1_strokes.json'  # Change to your file
+    import sys
+    
+    # Parse command-line arguments
+    face_num = sys.argv[1] if len(sys.argv) > 1 else '3'
+    run_num = sys.argv[2] if len(sys.argv) > 2 else '1'
+    
+    # Construct JSON file path
+    json_file = f'outputs/strokes/face{face_num}_strokes.json'
+    
+    # Setup logging with face and run number
+    log_file = setup_logging(f'face{face_num}', run_num)
     
     try:
         with open(json_file, 'r') as f:
             strokes = json.load(f)
+        
+        # Log header information
+        logger.info("="*60)
+        logger.info("UR3 MOTION PLANNING PIPELINE")
+        logger.info("="*60)
+        logger.info(f"TEST RUN: Face {face_num}, Run #{run_num}")
+        logger.info(f"Log file: {log_file}")
+        logger.info("")
         
         print("="*60)
         print("UR3 MOTION PLANNING PIPELINE")

@@ -1,0 +1,27 @@
+============================================================
+UR3 MOTION PLANNING PIPELINE
+============================================================
+TEST RUN: Face 3, Run #1
+Log file: test_run_face3_1.log
+
+============================================================
+UR3 SELFIE DRAWING ROBOT — Motion Planning Pipeline
+============================================================
+Input:  11 raw strokes loaded
+Input:  912 total waypoints
+[Scaling] Stroke bounds: X [235, 655], Y [120, 445]
+[Scaling] Stroke size: 420×325px, scale_factor: 0.878
+[Scaling] Rescaled to 87.8% to fit within canvas
+Input:  Raw travel distance: 1569.9 px
+
+[Optimise] Running Nearest-Neighbour sort...
+[NN Sort] 11 strokes | travel saved ≈ 915.4 px | time: 0.9 ms
+[Optimise] Running 2-opt local search refinement...
+[2-Opt] 3 iterations | travel saved ≈ -271.4 px | time: 2.8 ms
+[Result]  Optimised travel: 925.9 px (41.0% reduction)
+
+[Script] Generated (66759 bytes)
+
+[Pipeline Complete] Total time: 0.015s
+============================================================
+
