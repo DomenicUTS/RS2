@@ -44,9 +44,7 @@ Perception Subsystem          Motion Planning Subsystem        GUI Subsystem
 /home/domenic/RS2/
 ├── README.md                          # Project overview (this file)
 ├── TESTING_AND_UR3_GUIDE.md          # Testing procedures and real robot setup
-├── SPRINT2_TEST_PLAN.md              # Test specifications and criteria
-├── SPRINT2_TEST_EVIDENCE.md          # Test execution results and metrics
-├── SPRINT2_PRESENTATION.md           # Sprint 2 deliverable presentation
+
 
 ├── src/                               # Motion planning core library
 │   ├── ur3_selfie_draw.py            # Main trajectory generation (615 lines)
@@ -229,10 +227,7 @@ controller.send_script(script)
 
 **Detailed references:**
 - [ROS 2 Node Documentation](./ros2_ws/src/ur3_motion_planning/README.md) - ROS 2-specific configuration and interfaces
-- [Testing and UR3 Setup Guide](./TESTING_AND_UR3_GUIDE.md) - Comprehensive testing procedures
-- [Sprint 2 Test Plan](./SPRINT2_TEST_PLAN.md) - Test specifications and acceptance criteria
-- [Sprint 2 Evidence](./SPRINT2_TEST_EVIDENCE.md) - Test execution results with quantitative metrics
-- [Sprint 2 Presentation](./SPRINT2_PRESENTATION.md) - Project deliverable presentation outline
+- [Testing and UR3 Setup Guide](./TESTING_AND_UR3_GUIDE.md) - Comprehensive testing procedures for simulator and real robot
 
 ---
 
