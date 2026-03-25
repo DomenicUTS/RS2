@@ -10,14 +10,28 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseArray, Pose, Point, PoseStamped
 from std_msgs.msg import String
 import numpy as np
-from moveit_commander import MoveGroupCommander, PlanningSceneInterface
-from moveit_msgs.msg import CollisionObject
-from shape_msgs.msg import SolidPrimitive
 import time
+import json
+import os
 
 class UR3MotionPlanningNode(Node):
     def __init__(self):
         super().__init__('ur3_motion_planning_node_moveit2')
+        
+        # Lazy import moveit_commander to allow other modules to run
+        try:
+            from moveit_commander import MoveGroupCommander, PlanningSceneInterface
+            from moveit_msgs.msg import CollisionObject
+            from shape_msgs.msg import SolidPrimitive
+        except ImportError as e:
+            self.get_logger().error(f"moveit_commander not available: {e}")
+            self.get_logger().error("Install with: sudo apt install ros-humble-moveit")
+            return
+        
+        self.MoveGroupCommander = MoveGroupCommander
+        self.PlanningSceneInterface = PlanningSceneInterface
+        self.CollisionObject = CollisionObject
+        self.SolidPrimitive = SolidPrimitive
         
         # Declare parameters
         self.declare_parameter('robot_ip', '192.168.56.101')
@@ -34,8 +48,8 @@ class UR3MotionPlanningNode(Node):
         
         # MoveIt2 setup
         try:
-            self.move_group = MoveGroupCommander("manipulator")
-            self.planning_scene = PlanningSceneInterface()
+            self.move_group = self.MoveGroupCommander("manipulator")
+            self.planning_scene = self.PlanningSceneInterface()
             self.get_logger().info("[MoveIt2] Move group initialized")
         except Exception as e:
             self.get_logger().error(f"[MoveIt2] Initialization failed: {e}")
@@ -57,6 +71,9 @@ class UR3MotionPlanningNode(Node):
         self.LINEAR_VEL = 0.08
         self.CANVAS_PX_W = 400
         self.CANVAS_PX_H = 300
+        
+        # Schedule loading face1 strokes after initialization
+        self.create_timer(1.0, self._on_startup_complete)
         
         self.get_logger().info("[Subscribe] Listening on /stroke_paths")
     
@@ -91,6 +108,57 @@ class UR3MotionPlanningNode(Node):
         
         self.planning_scene.add_object(collision_object)
         self.get_logger().info(f"[Planning Scene] Table collision object added (1.7×1.7×0.2m at z=-0.07)")
+    
+    def _on_startup_complete(self):
+        """Called after initialization to load and execute face1 strokes."""
+        # Only run once
+        if hasattr(self, '_startup_done'):
+            return
+        self._startup_done = True
+        
+        self.get_logger().info("[Startup] Loading face1_strokes.json...")
+        
+        # Find face1_strokes.json
+        possible_paths = [
+            os.path.expanduser("~/RS2/outputs/strokes/face1_strokes.json"),
+            "/home/domenic/RS2/outputs/strokes/face1_strokes.json",
+            "../../../outputs/strokes/face1_strokes.json",
+        ]
+        
+        strokes_file = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                strokes_file = path
+                break
+        
+        if not strokes_file:
+            self.get_logger().error("[Startup] face1_strokes.json not found!")
+            return
+        
+        try:
+            with open(strokes_file, 'r') as f:
+                strokes_data = json.load(f)
+            
+            self.get_logger().info(f"[Startup] Loaded {len(strokes_data)} strokes from face1")
+            
+            # Convert strokes to flat waypoint list
+            waypoints = []
+            for stroke in strokes_data:
+                for point in stroke:
+                    pose = Pose()
+                    pose.position.x = float(point[0])
+                    pose.position.y = float(point[1])
+                    pose.position.z = 0.0
+                    waypoints.append(pose)
+            
+            self.get_logger().info(f"[Startup] Converted to {len(waypoints)} waypoints")
+            self.get_logger().info("[Startup] Starting face1 drawing execution...")
+            
+            # Execute the drawing
+            self._plan_and_execute_drawing(waypoints)
+            
+        except Exception as e:
+            self.get_logger().error(f"[Startup] Error: {e}")
     
     def stroke_callback(self, msg: PoseArray):
         """Handle incoming stroke paths."""
