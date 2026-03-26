@@ -338,7 +338,12 @@ def build_urscript(strokes: List[List[Tuple[float, float]]],
     if not is_valid:
         logger.warning(f"Home position validation: {msg} (will attempt anyway)")
     
-    lines.append(f"  # Move to safe home above canvas")
+    # Start with joint move to safe home position (safer than linear from unknown start state)
+    lines.append(f"  # Move to safe home via joint space (safe from any starting position)")
+    lines.append(f"  movej([0.0, -1.57, 1.57, -1.57, -1.57, 0.0], ")
+    lines.append(f"         a={JOINT_ACCEL}, v={JOINT_VEL})")
+    lines.append("")
+    lines.append(f"  # Now move linearly to canvas height")
     lines.append(f"  movel({pose_str(home, TOOL_ORIENT)}, ")
     lines.append(f"         a={LINEAR_ACCEL}, v={LINEAR_VEL})")
     lines.append("")
@@ -401,10 +406,10 @@ def build_urscript(strokes: List[List[Tuple[float, float]]],
         waypoint_count += 1
         lines.append("")
 
-    # Return home (linear for IK stability)
-    lines.append(f"  # Return to home")
-    lines.append(f"  movel({pose_str(home, TOOL_ORIENT)}, "
-                 f"a={LINEAR_ACCEL}, v={LINEAR_VEL})")
+    # Return home (joint move for safety, away from canvas area)
+    lines.append(f"  # Return to safe home via joint space")
+    lines.append(f"  movej([0.0, -1.57, 1.57, -1.57, -1.57, 0.0], ")
+    lines.append(f"         a={JOINT_ACCEL}, v={JOINT_VEL})")
     lines.append("end")
     lines.append("")
     lines.append("draw_face()")
