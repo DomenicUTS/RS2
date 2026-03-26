@@ -216,12 +216,27 @@ class UR3DrawingNode(Node):
             # Convert to float tuples for optimization
             strokes_float = [[(float(x), float(y)) for x, y in stroke] for stroke in strokes]
             
+            # Calculate raw travel distance (before optimization)
+            raw_distance = self._calculate_total_distance(strokes_float)
+            
             # Apply Nearest-Neighbour
             metrics = Metrics()
             strokes_nn = nearest_neighbour_sort(strokes_float, metrics=metrics)
             
             # Apply 2-Opt
             strokes_opt = two_opt_improve(strokes_nn, max_iterations=50, metrics=metrics)
+            
+            # Calculate optimized travel distance
+            optimized_distance = self._calculate_total_distance(strokes_opt)
+            
+            # Populate metrics with actual values
+            metrics.raw_stroke_count = len(strokes_float)
+            metrics.raw_waypoint_count = sum(len(stroke) for stroke in strokes_float)
+            metrics.raw_travel_distance = raw_distance
+            
+            metrics.optimized_stroke_count = len(strokes_opt)
+            metrics.optimized_waypoint_count = sum(len(stroke) for stroke in strokes_opt)
+            metrics.optimized_travel_distance = optimized_distance
             
             self.get_logger().info(f"[Optimize]{metrics.summary()}")
             self._metrics = metrics
@@ -231,6 +246,17 @@ class UR3DrawingNode(Node):
         except Exception as e:
             self.get_logger().error(f"[Optimize] Failed: {e}")
             return strokes
+    
+    def _calculate_total_distance(self, strokes: List) -> float:
+        """Calculate total travel distance across all strokes."""
+        total = 0.0
+        for stroke in strokes:
+            for i in range(len(stroke) - 1):
+                x1, y1 = stroke[i]
+                x2, y2 = stroke[i+1]
+                dist = math.sqrt((x2-x1)**2 + (y2-y1)**2)
+                total += dist
+        return total
     
     def _strokes_to_cartesian_waypoints(self, strokes: List) -> List[Pose]:
         """
