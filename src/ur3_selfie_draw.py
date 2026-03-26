@@ -48,11 +48,11 @@ Z_TRAVEL  = CANVAS_ORIGIN_ROBOT[2] + 0.150  # pen-up (15cm above table for joint
 # This is positioned above the center of the canvas
 HOME_POS = np.array([0.250, -0.175, 0.230])  # closer and safer reach envelope
 
-# Motion params
-JOINT_ACCEL  = 0.5   # rad/s²  (faster for simulator)
-JOINT_VEL    = 0.5  # rad/s   (faster for simulator)
-LINEAR_ACCEL = 0.3  # m/s²
-LINEAR_VEL   = 0.05  # m/s  (drawing speed)
+# Motion params (optimized for simulator speed)
+JOINT_ACCEL  = 2.0   # rad/s²  (fast acceleration)
+JOINT_VEL    = 2.0   # rad/s   (fast movement)
+LINEAR_ACCEL = 1.0   # m/s²    (aggressive acceleration)
+LINEAR_VEL   = 0.25  # m/s     (5x drawing speed vs before)
 
 # Fixed wrist orientation (pen pointing straight down)
 # Rx, Ry, Rz in axis-angle (radians)
