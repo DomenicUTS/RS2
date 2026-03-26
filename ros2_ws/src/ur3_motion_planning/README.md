@@ -70,7 +70,7 @@ See code comments for implementation details.
 
 **No motion:** Ensure `add_table_simple.py` is running in another terminal (publishes MoveIt2 collision object)
 
-**Protective stops:** Reduce motion parameters in `src/ur3_selfie_draw.py` (use Conservative level)
+**Protective stops:** Reduce motion parameters to Conservative level in `src/ur3_selfie_draw.py`
 - Confirm UR3 is powered and in operation
 
 **Topic subscription not receiving data**

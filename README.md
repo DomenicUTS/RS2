@@ -86,9 +86,8 @@ LINEAR_VEL   = 0.15  # m/s
 ```
 
 **Predefined levels:**
-- **Conservative:** (0.5, 0.5, 0.3, 0.05)
-- **Lower Mid:** (0.73, 0.80, 0.47, 0.10)
-- **Higher Mid:** (0.97, 1.10, 0.64, 0.15) — Current
+- **Conservative:** (0.73, 0.80, 0.47, 0.10)
+- **Mid:** (0.97, 1.10, 0.64, 0.15) — Current
 - **Maximum:** (1.2, 1.4, 0.8, 0.20)
 
 After changing parameters, rebuild:
@@ -134,7 +133,7 @@ Collision avoidance is applied **during planning** (Stage 4). URScript fallback 
 | Build fails | `source /opt/ros/humble/setup.bash` then `colcon clean workspace && colcon build` |
 | Cannot connect to robot | Check IP and ping robot: `ping 192.168.56.101` |
 | Execution fails | Ensure table publisher running in Terminal 2 |
-| Protective stops on robot | Reduce motion parameters (use Conservative level) |
+| Protective stops on robot | Reduce motion parameters to Conservative level in `src/ur3_selfie_draw.py` |
 
 ---
 
