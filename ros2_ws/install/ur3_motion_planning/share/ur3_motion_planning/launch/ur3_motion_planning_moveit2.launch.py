@@ -54,18 +54,8 @@ def generate_launch_description():
         }.items(),
     )
     
-    # Add table to planning scene automatically
-    add_table_node = Node(
-        package='ur3_motion_planning',
-        executable='python3',
-        arguments=['-m', 'ur3_motion_planning.add_table_simple'],
-        output='log',
-        name='table_publisher',
-    )
-    
     ld = LaunchDescription(declared_arguments)
     ld.add_action(ur_moveit_launch)
-    ld.add_action(add_table_node)
     
     return ld
 
