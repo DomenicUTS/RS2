@@ -32,7 +32,7 @@ ROBOT_PORT = 30002             # Primary interface (URScript)
 
 # Robot draw plane (world coords in metres, z = table surface)
 # Pre-calibrated: top-left corner of canvas in robot base frame
-CANVAS_ORIGIN_ROBOT = np.array([0.350, -0.150, 0.010])   # (x, y, z) metres — drawing surface at table
+CANVAS_ORIGIN_ROBOT = np.array([0.280, -0.100, 0.010])   # (x, y, z) metres — drawing surface at table (closer, safer)
 CANVAS_WIDTH_M      = 0.200    # 20 cm canvas
 CANVAS_HEIGHT_M     = 0.150    # 15 cm canvas
 
@@ -42,11 +42,11 @@ CANVAS_PX_H = 300
 
 # Z heights
 Z_DRAW    = CANVAS_ORIGIN_ROBOT[2]          # pen-down (at table surface)
-Z_TRAVEL  = CANVAS_ORIGIN_ROBOT[2] + 0.200  # pen-up (20cm above table for joint clearance)
+Z_TRAVEL  = CANVAS_ORIGIN_ROBOT[2] + 0.150  # pen-up (15cm above table for joint clearance)
 
 # Safe home position (close to canvas, definitely reachable by UR3)
 # This is positioned above the center of the canvas
-HOME_POS = np.array([0.300, -0.225, 0.250])  # 30cm away, slightly back, 25cm up (high clearance)
+HOME_POS = np.array([0.250, -0.175, 0.230])  # closer and safer reach envelope
 
 # Motion params
 JOINT_ACCEL  = 0.5   # rad/s²  (faster for simulator)
