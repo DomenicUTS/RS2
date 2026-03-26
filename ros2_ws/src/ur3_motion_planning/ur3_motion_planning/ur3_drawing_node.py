@@ -223,7 +223,7 @@ class UR3DrawingNode(Node):
             # Apply 2-Opt
             strokes_opt = two_opt_improve(strokes_nn, max_iterations=50, metrics=metrics)
             
-            self.get_logger().info(f"[Optimize] NN: {metrics.nn_time_ms:.1f}ms | 2-Opt: {metrics.opt2_time_ms:.1f}ms")
+            self.get_logger().info(f"[Optimize]{metrics.summary()}")
             self._metrics = metrics
             
             return strokes_opt
