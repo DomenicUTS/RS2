@@ -32,9 +32,9 @@ ROBOT_PORT = 30002             # Primary interface (URScript)
 
 # Robot draw plane (world coords in metres, z = table surface)
 # Pre-calibrated: top-left corner of canvas in robot base frame
-CANVAS_ORIGIN_ROBOT = np.array([0.280, -0.100, 0.010])   # (x, y, z) metres — drawing surface at table (closer, safer)
-CANVAS_WIDTH_M      = 0.200    # 20 cm canvas
-CANVAS_HEIGHT_M     = 0.150    # 15 cm canvas
+CANVAS_ORIGIN_ROBOT = np.array([0.240, -0.075, 0.010])   # (x, y, z) metres — much closer to base for safe reach
+CANVAS_WIDTH_M      = 0.150    # 15 cm canvas (reduced from 20cm for safety)
+CANVAS_HEIGHT_M     = 0.120    # 12 cm canvas (reduced from 15cm)
 
 # Canvas image dimensions (pixels) — must match canvas_face.py output
 CANVAS_PX_W = 400
