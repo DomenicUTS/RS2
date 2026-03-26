@@ -248,14 +248,17 @@ class UR3DrawingNode(Node):
             return strokes
     
     def _calculate_total_distance(self, strokes: List) -> float:
-        """Calculate total travel distance across all strokes."""
+        """Calculate travel distance between strokes (what NN+2-Opt optimizes)."""
         total = 0.0
-        for stroke in strokes:
-            for i in range(len(stroke) - 1):
-                x1, y1 = stroke[i]
-                x2, y2 = stroke[i+1]
-                dist = math.sqrt((x2-x1)**2 + (y2-y1)**2)
-                total += dist
+        for i in range(len(strokes) - 1):
+            # Distance from end of current stroke to start of next stroke
+            end_point = strokes[i][-1]
+            start_point = strokes[i+1][0]
+            dist = math.sqrt(
+                (start_point[0] - end_point[0])**2 + 
+                (start_point[1] - end_point[1])**2
+            )
+            total += dist
         return total
     
     def _strokes_to_cartesian_waypoints(self, strokes: List) -> List[Pose]:
