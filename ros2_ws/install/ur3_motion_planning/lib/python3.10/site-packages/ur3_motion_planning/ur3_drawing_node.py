@@ -161,11 +161,14 @@ class UR3DrawingNode(Node):
             
             # Stage 5: Execute
             self._publish_status("EXECUTING")
+            self.get_logger().info("[Stage 5] Executing trajectory...")
             success = self._execute_trajectory(trajectory, strokes_opt)
             
             if success:
                 self._publish_status("COMPLETE")
-                self.get_logger().info("[Pipeline] ✓ Drawing complete!")
+                self.get_logger().info("\n" + "="*60)
+                self.get_logger().info("✓✓✓ TRAJECTORY EXECUTED SUCCESSFULLY ✓✓✓")
+                self.get_logger().info("="*60 + "\n")
             else:
                 self._publish_status("ERROR_EXECUTION_FAILED")
                 self.get_logger().error("[Pipeline] ✗ Execution failed")
