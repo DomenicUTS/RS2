@@ -1,38 +1,64 @@
 #!/bin/bash
 
-# Test Suite Runner: 5 runs for each face (1, 2, 3)
-# Logs: test_run_face{N}_{RUN}.log
+# Test 1 Suite Runner: 5 runs for each face (face1, face2, face3)
+# Motion planning with collision avoidance
 
-echo "=================================================="
-echo "UR3 MOTION PLANNING - TEST SUITE"
-echo "Running 5 test cycles for Face 1, 2, and 3"
-echo "=================================================="
+set -e
+
+LOG_DIR="$HOME/RS2/test_results"
+ROS_WS="$HOME/RS2/ros2_ws"
+mkdir -p "$LOG_DIR"
+
+echo "=================================================================="
+echo "TEST 1 SUITE - MOTION PLANNING WITH COLLISION AVOIDANCE"
+echo "Running: 5 runs × 3 faces = 15 total tests"
+echo "=================================================================="
 echo ""
 
-FACES=(1 2 3)
-RUNS=5
+source "$ROS_WS/install/setup.bash"
+cd "$ROS_WS"
 
-for FACE in "${FACES[@]}"; do
-    echo "========== FACE $FACE =========="
-    for RUN in $(seq 1 $RUNS); do
-        echo "  Run $RUN of $RUNS..."
-        python3 src/ur3_selfie_draw.py $FACE $RUN > /dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            echo "    ✓ Test complete (log: test_run_face${FACE}_${RUN}.log)"
+FACES=("face1" "face2" "face3")
+RUNS=5
+test_num=0
+total_tests=$((RUNS * ${#FACES[@]}))
+
+for face in "${FACES[@]}"; do
+    echo "========== ${face^^} =========="
+    for run in $(seq 1 $RUNS); do
+        ((test_num++))
+        log_file="$LOG_DIR/test1_${face}_run${run}.log"
+        
+        printf "[%2d/%2d] Run %d: " "$test_num" "$total_tests" "$run"
+        
+        # Run with timeout
+        if timeout 120 ros2 run ur3_motion_planning motion_planning_node \
+            --ros-args -p robot_ip:=192.168.56.101 -p face:="$face" \
+            > "$log_file" 2>&1; then
+            
+            # Check if successful
+            if grep -q "TRAJECTORY EXECUTED SUCCESSFULLY" "$log_file"; then
+                strokes=$(grep -oP 'Loaded \K\d+' "$log_file" | head -1)
+                waypoints=$(grep -oP '\K\d+(?= Cartesian waypoints)' "$log_file" | head -1)
+                echo "✓ PASS | Strokes: $strokes, Waypoints: $waypoints"
+            else
+                echo "✗ FAIL (no success)"
+            fi
         else
-            echo "    ✗ Test failed"
+            echo "✗ FAIL (timeout/error)"
         fi
+        
+        sleep 1
     done
     echo ""
 done
 
-echo "=================================================="
+echo "=================================================================="
 echo "TEST SUITE COMPLETE"
-echo "=================================================="
-echo ""
+echo "=================================================================="
+echo "Logs saved to: $LOG_DIR/"
 echo "Generated log files:"
-ls -lh test_run_*.log 2>/dev/null || echo "No log files found"
+ls -lh "$LOG_DIR"/test1_*.log 2>/dev/null | tail -5
+echo "..."
 echo ""
-echo "Summary:"
-echo "  Total tests: $((${#FACES[@]} * RUNS))"
-echo "  Per face: $RUNS runs"
+echo "Total: $((${#FACES[@]} * RUNS)) tests completed"

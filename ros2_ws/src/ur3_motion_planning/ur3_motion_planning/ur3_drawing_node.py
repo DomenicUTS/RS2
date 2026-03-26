@@ -3,11 +3,16 @@
 UR3 Motion Planning Node - Complete Pipeline with MoveIt2 Collision Avoidance
 
 Pipeline:
-  1. Load face1_strokes.json (pixel coordinates)
+  1. Load face_strokes.json (pixel coordinates, configurable face)
   2. Optimize path ordering (Nearest-Neighbour + 2-Opt)
   3. Convert to Cartesian waypoints (robot world coordinates)
   4. Plan collision-safe trajectory using MoveIt2 /compute_cartesian_path service
   5. Execute on real robot or simulator
+
+Parameters:
+  - robot_ip: IP address of UR3 (default: 192.168.56.101)
+  - face: Which face to draw (default: face1, options: face1, face2, face3)
+  - enable_optimization: Enable path optimization (default: true)
 
 No moveit_commander dependency - uses ROS 2 services directly.
 """
@@ -71,11 +76,13 @@ class UR3DrawingNode(Node):
         self.declare_parameter('robot_port', 30002)
         self.declare_parameter('enable_optimization', True)
         self.declare_parameter('use_real_robot', False)
+        self.declare_parameter('face', 'face1')
         
         self.robot_ip = self.get_parameter('robot_ip').value
         self.robot_port = self.get_parameter('robot_port').value
         self.enable_optimization = self.get_parameter('enable_optimization').value
         self.use_real_robot = self.get_parameter('use_real_robot').value
+        self.face = self.get_parameter('face').value
         
         # State
         self._startup_done = False
@@ -103,6 +110,7 @@ class UR3DrawingNode(Node):
         
         self.get_logger().info("[Init] UR3 Drawing Node initialized")
         self.get_logger().info(f"[Config] Robot: {self.robot_ip}:{self.robot_port}")
+        self.get_logger().info(f"[Config] Face: {self.face}")
         self.get_logger().info(f"[Config] Optimization: {'ENABLED' if self.enable_optimization else 'DISABLED'}")
         self.get_logger().info(f"[Config] Target: {'Real Robot' if self.use_real_robot else 'Simulator'}")
         
@@ -178,10 +186,10 @@ class UR3DrawingNode(Node):
             self._publish_status(f"ERROR_{str(e)[:40]}")
     
     def _load_strokes(self) -> List[List[Tuple[float, float]]]:
-        """Stage 1: Load face1_strokes.json."""
+        """Stage 1: Load stroke file for current face."""
         possible_paths = [
-            os.path.expanduser("~/RS2/outputs/strokes/face1_strokes.json"),
-            "/home/domenic/RS2/outputs/strokes/face1_strokes.json",
+            os.path.expanduser(f"~/RS2/outputs/strokes/{self.face}_strokes.json"),
+            f"/home/domenic/RS2/outputs/strokes/{self.face}_strokes.json",
         ]
         
         for path in possible_paths:
@@ -189,13 +197,13 @@ class UR3DrawingNode(Node):
                 try:
                     with open(path, 'r') as f:
                         strokes = json.load(f)
-                    self.get_logger().info(f"[Load] Found strokes at {path}")
+                    self.get_logger().info(f"[Load] Loaded {self.face} from {path}")
                     return strokes
                 except Exception as e:
                     self.get_logger().error(f"[Load] Failed to read {path}: {e}")
                     continue
         
-        self.get_logger().error("[Load] face1_strokes.json not found in any known location")
+        self.get_logger().error(f"[Load] {self.face}_strokes.json not found in any known location")
         return None
     
     def _optimize_strokes(self, strokes: List) -> List:
