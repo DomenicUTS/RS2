@@ -2,18 +2,27 @@
 """
 Integrated launch: Perception Pipeline → Motion Planning Pipeline
 
-Starts the selfie_perception nodes (image loader → face detection → edge
-extraction → stroke mapping → visualisation) **and** the ur3_motion_planning
-drawing node in "topic" mode so it subscribes to /drawing_strokes published
-by the perception mapping_node.
+Starts the selfie_perception nodes (face detection → edge extraction →
+stroke mapping → visualisation) **and** the ur3_motion_planning drawing
+node in "topic" mode so it subscribes to /drawing_strokes published by
+the perception mapping_node.
+
+The GUI is NOT launched here — it runs separately as a plain Python script
+(~/gui/selfie_drawing_gui_ros2.py).  It publishes captured images on
+/raw_image, so the image_loader_node is excluded when image_source=gui.
 
 Usage:
+    # Without GUI (perception loads from ~/perception/input/):
     ros2 launch ur3_motion_planning integrated_pipeline.launch.py
-    ros2 launch ur3_motion_planning integrated_pipeline.launch.py robot_ip:=10.0.0.2
+
+    # With GUI (start the GUI separately in another terminal):
+    ros2 launch ur3_motion_planning integrated_pipeline.launch.py image_source:=gui
+    python3 ~/gui/selfie_drawing_gui_ros2.py
 """
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import LaunchConfigurationEquals
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -38,18 +47,27 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'display_preview',
             default_value='false',
-            description='Show perception preview window (requires GUI)',
+            description='Show perception preview window (requires display)',
+        ),
+        DeclareLaunchArgument(
+            'image_source',
+            default_value='file',
+            description="'file' = image_loader_node watches ~/perception/input/; "
+                        "'gui' = GUI publishes on /raw_image (don't start image_loader)",
         ),
     ]
 
-    # ── Perception nodes (from selfie_perception package) ──
+    # ── Image loader (only when not using GUI) ──
+    image_loader = Node(
+        package='selfie_perception',
+        executable='image_loader_node',
+        name='image_loader_node',
+        output='screen',
+        condition=LaunchConfigurationEquals('image_source', 'file'),
+    )
+
+    # ── Perception processing nodes (always started) ──
     perception_nodes = [
-        Node(
-            package='selfie_perception',
-            executable='image_loader_node',
-            name='image_loader_node',
-            output='screen',
-        ),
         Node(
             package='selfie_perception',
             executable='face_detection_node',
@@ -92,6 +110,7 @@ def generate_launch_description():
     )
 
     ld = LaunchDescription(declared_arguments)
+    ld.add_action(image_loader)
     for n in perception_nodes:
         ld.add_action(n)
     ld.add_action(motion_node)

@@ -107,6 +107,10 @@ class UR3DrawingNode(Node):
         self.strokes_sub = self.create_subscription(
             String, 'drawing_strokes', self._on_drawing_strokes, 10)
         
+        # Subscriber for GUI commands (START / PAUSE / RESUME / STOP)
+        self.gui_cmd_sub = self.create_subscription(
+            String, 'gui/command', self._on_gui_command, 10)
+        
         # Action client for trajectory execution
         self.trajectory_client = ActionClient(
             self,
@@ -149,7 +153,12 @@ class UR3DrawingNode(Node):
     def _on_drawing_strokes(self, msg: String):
         """Callback for /drawing_strokes published by the perception pipeline."""
         if self._startup_done:
-            self.get_logger().info("[Perception] Strokes received but pipeline already ran — ignoring")
+            # Store for next run but don't auto-start — wait for GUI START cmd
+            self.get_logger().info("[Perception] New strokes received — stored (waiting for START or auto-start)")
+            try:
+                self._topic_strokes = json.loads(msg.data)
+            except json.JSONDecodeError:
+                pass
             return
         try:
             strokes = json.loads(msg.data)
@@ -157,11 +166,32 @@ class UR3DrawingNode(Node):
                 f"[Perception] Received {len(strokes)} strokes "
                 f"({sum(len(s) for s in strokes)} points) via topic")
             self._topic_strokes = strokes
-            # Auto-start pipeline when strokes arrive (topic mode)
+            # Auto-start pipeline when strokes arrive (topic mode without GUI)
             if self.stroke_source == 'topic':
                 self._on_startup_complete()
         except json.JSONDecodeError as e:
             self.get_logger().error(f"[Perception] Invalid JSON on drawing_strokes: {e}")
+    
+    def _on_gui_command(self, msg: String):
+        """Handle commands from the GUI: START, PAUSE, RESUME, STOP."""
+        cmd = msg.data.strip().upper()
+        self.get_logger().info(f"[GUI] Received command: {cmd}")
+        if cmd == 'START':
+            if self._topic_strokes is not None:
+                # Reset so pipeline can run again
+                self._startup_done = False
+                self._on_startup_complete()
+            else:
+                self.get_logger().warn("[GUI] START received but no strokes available")
+        elif cmd == 'STOP':
+            self._publish_status("STOPPED")
+            self.get_logger().info("[GUI] Stop requested")
+        elif cmd == 'PAUSE':
+            self._publish_status("PAUSED")
+            self.get_logger().info("[GUI] Pause requested")
+        elif cmd == 'RESUME':
+            self._publish_status("RESUMED")
+            self.get_logger().info("[GUI] Resume requested")
     
     # ──────────────────────────────────────────────────────────────
     #  PIPELINE STAGES
@@ -379,28 +409,28 @@ class UR3DrawingNode(Node):
             return None
     
     def _execute_trajectory(self, trajectory: JointTrajectory, strokes: List = None) -> bool:
-        """Stage 5: Execute trajectory on real robot or simulator."""
+        """Stage 5: Execute trajectory on real robot or simulator.
+        
+        Prefers URScript over the action server because the action server
+        requires a fully configured UR driver with IK-solved joint configs.
+        URScript works directly with the Polyscope simulator or real robot.
+        """
+        # ── Primary path: URScript over TCP socket ──
+        if OPTIMIZATION_AVAILABLE and strokes:
+            self.get_logger().info("[Execute] Using URScript execution path...")
+            return self._execute_via_urscript(strokes)
+        
+        # ── Fallback: ROS 2 action server (requires full UR driver) ──
         try:
-            # Check if action server is available
             if not self.trajectory_client.wait_for_server(timeout_sec=2.0):
-                self.get_logger().warn("[Execute] Trajectory action server not available")
-                
-                # Fallback: Generate URScript and send via socket
-                if OPTIMIZATION_AVAILABLE and strokes:
-                    self.get_logger().info("[Execute] Falling back to URScript generation...")
-                    return self._execute_via_urscript(strokes)
-                else:
-                    self.get_logger().info("[Execute] Trajectory would be sent to robot if server available")
-                    return True  # Don't fail in test mode
+                self.get_logger().warn("[Execute] No action server and no strokes for URScript")
+                return True  # Don't fail in test mode
             
-            # Send trajectory via action server
             goal = FollowJointTrajectory.Goal()
             goal.trajectory = trajectory
             
-            self.get_logger().info("[Execute] Sending trajectory to robot...")
+            self.get_logger().info("[Execute] Sending trajectory via action server...")
             future = self.trajectory_client.send_goal_async(goal)
-            
-            # Wait for result (with timeout)
             rclpy.spin_until_future_complete(self, future, timeout_sec=120.0)
             
             if future.done():
