@@ -54,7 +54,10 @@ try:
         HOME_POS,
         TOOL_ORIENT,
         LINEAR_VEL,
-        LINEAR_ACCEL
+        LINEAR_ACCEL,
+        MARKER_TILT_DEG,
+        EE_DRAW_HEIGHT,
+        TCP_OFFSET
     )
     OPTIMIZATION_AVAILABLE = True
 except ImportError as e:
@@ -66,6 +69,10 @@ class UR3DrawingNode(Node):
     """
     ROS 2 node for UR3 selfie drawing with collision avoidance.
     Coordinates strokes → optimization → MoveIt2 planning → execution.
+
+    stroke_source parameter:
+      'file'  – load from JSON file (original behaviour)
+      'topic' – subscribe to /drawing_strokes published by perception pipeline
     """
     
     def __init__(self):
@@ -77,21 +84,28 @@ class UR3DrawingNode(Node):
         self.declare_parameter('enable_optimization', True)
         self.declare_parameter('use_real_robot', False)
         self.declare_parameter('face', 'face1')
+        self.declare_parameter('stroke_source', 'file')  # 'file' or 'topic'
         
         self.robot_ip = self.get_parameter('robot_ip').value
         self.robot_port = self.get_parameter('robot_port').value
         self.enable_optimization = self.get_parameter('enable_optimization').value
         self.use_real_robot = self.get_parameter('use_real_robot').value
         self.face = self.get_parameter('face').value
+        self.stroke_source = self.get_parameter('stroke_source').value
         
         # State
         self._startup_done = False
         self._last_trajectory = None
         self._metrics = Metrics() if OPTIMIZATION_AVAILABLE else None
+        self._topic_strokes = None  # strokes received via topic
         
         # Publishers
         self.status_pub = self.create_publisher(String, 'drawing_status', 10)
         self.trajectory_display_pub = self.create_publisher(PoseArray, 'trajectory_preview', 10)
+        
+        # Subscriber for perception-published strokes
+        self.strokes_sub = self.create_subscription(
+            String, 'drawing_strokes', self._on_drawing_strokes, 10)
         
         # Action client for trajectory execution
         self.trajectory_client = ActionClient(
@@ -111,6 +125,7 @@ class UR3DrawingNode(Node):
         self.get_logger().info("[Init] UR3 Drawing Node initialized")
         self.get_logger().info(f"[Config] Robot: {self.robot_ip}:{self.robot_port}")
         self.get_logger().info(f"[Config] Face: {self.face}")
+        self.get_logger().info(f"[Config] Stroke source: {self.stroke_source}")
         self.get_logger().info(f"[Config] Optimization: {'ENABLED' if self.enable_optimization else 'DISABLED'}")
         self.get_logger().info(f"[Config] Target: {'Real Robot' if self.use_real_robot else 'Simulator'}")
         
@@ -119,8 +134,34 @@ class UR3DrawingNode(Node):
         else:
             self.get_logger().warn("[Config] ✗ ur3_selfie_draw not available (optimization disabled)")
         
-        # Schedule startup
-        self.create_timer(2.0, self._on_startup_complete)
+        # In topic mode, the pipeline starts when strokes arrive via subscriber.
+        # In file mode, schedule a startup timer as before.
+        if self.stroke_source == 'file':
+            self.create_timer(2.0, self._on_startup_complete)
+        else:
+            self.get_logger().info("[Init] Waiting for strokes on /drawing_strokes topic ...")
+            self._publish_status("WAITING_FOR_PERCEPTION")
+    
+    # ──────────────────────────────────────────────────────────────
+    #  PERCEPTION SUBSCRIBER
+    # ──────────────────────────────────────────────────────────────
+    
+    def _on_drawing_strokes(self, msg: String):
+        """Callback for /drawing_strokes published by the perception pipeline."""
+        if self._startup_done:
+            self.get_logger().info("[Perception] Strokes received but pipeline already ran — ignoring")
+            return
+        try:
+            strokes = json.loads(msg.data)
+            self.get_logger().info(
+                f"[Perception] Received {len(strokes)} strokes "
+                f"({sum(len(s) for s in strokes)} points) via topic")
+            self._topic_strokes = strokes
+            # Auto-start pipeline when strokes arrive (topic mode)
+            if self.stroke_source == 'topic':
+                self._on_startup_complete()
+        except json.JSONDecodeError as e:
+            self.get_logger().error(f"[Perception] Invalid JSON on drawing_strokes: {e}")
     
     # ──────────────────────────────────────────────────────────────
     #  PIPELINE STAGES
@@ -133,7 +174,7 @@ class UR3DrawingNode(Node):
         self._startup_done = True
         
         try:
-            self.get_logger().info("[Pipeline] Starting face1 drawing pipeline...")
+            self.get_logger().info(f"[Pipeline] Starting drawing pipeline (source={self.stroke_source}) ...")
             self._publish_status("LOADING_STROKES")
             
             # Stage 1: Load strokes
@@ -186,10 +227,22 @@ class UR3DrawingNode(Node):
             self._publish_status(f"ERROR_{str(e)[:40]}")
     
     def _load_strokes(self) -> List[List[Tuple[float, float]]]:
-        """Stage 1: Load stroke file for current face."""
+        """Stage 1: Load strokes from file or from topic (perception pipeline)."""
+        # ── Topic source: strokes already received via subscriber ──
+        if self.stroke_source == 'topic':
+            if self._topic_strokes is not None:
+                self.get_logger().info(
+                    f"[Load] Using {len(self._topic_strokes)} strokes from /drawing_strokes topic")
+                return self._topic_strokes
+            self.get_logger().error("[Load] stroke_source='topic' but no strokes received yet")
+            return None
+
+        # ── File source (original behaviour) ──
         possible_paths = [
             os.path.expanduser(f"~/RS2/outputs/strokes/{self.face}_strokes.json"),
             f"/home/domenic/RS2/outputs/strokes/{self.face}_strokes.json",
+            # Also look for perception output copied here
+            os.path.expanduser("~/perception/output/perception_strokes.json"),
         ]
         
         for path in possible_paths:

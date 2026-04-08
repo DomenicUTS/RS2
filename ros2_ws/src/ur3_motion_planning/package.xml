@@ -20,6 +20,7 @@
   <exec_depend>ur_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>selfie_perception</exec_depend>
   <exec_depend>shape_msgs</exec_depend>
   <exec_depend>ur_moveit_config</exec_depend>
 

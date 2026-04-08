@@ -40,9 +40,17 @@ CANVAS_HEIGHT_M     = 0.120    # 12 cm canvas (reduced from 15cm)
 CANVAS_PX_W = 400
 CANVAS_PX_H = 300
 
-# Z heights
-Z_DRAW    = CANVAS_ORIGIN_ROBOT[2]          # pen-down (at table surface)
-Z_TRAVEL  = CANVAS_ORIGIN_ROBOT[2] + 0.150  # pen-up (15cm above table for joint clearance)
+# ── Marker holder geometry ──
+# 3D-printed part holds the marker at 20° from the end-effector perpendicular.
+# The end effector stays 10 cm above the canvas; the tilted marker reaches down.
+MARKER_TILT_DEG = 20.0                          # degrees from perpendicular
+MARKER_TILT_RAD = math.radians(MARKER_TILT_DEG)
+EE_DRAW_HEIGHT  = 0.10                          # end-effector height above canvas (m)
+
+# Z heights (end effector, NOT marker tip)
+CANVAS_SURFACE_Z = CANVAS_ORIGIN_ROBOT[2]                      # table / canvas surface
+Z_DRAW    = CANVAS_SURFACE_Z + EE_DRAW_HEIGHT                  # EE at 10 cm above canvas when drawing
+Z_TRAVEL  = CANVAS_SURFACE_Z + EE_DRAW_HEIGHT + 0.060          # pen-up (6 cm above draw height)
 
 # Safe home position (close to canvas, definitely reachable by UR3)
 # This is positioned above the center of the canvas
@@ -54,9 +62,44 @@ JOINT_VEL    = 1.10  # rad/s   (higher mid movement)
 LINEAR_ACCEL = 0.64  # m/s²    (higher mid acceleration)
 LINEAR_VEL   = 0.15  # m/s     (higher mid drawing speed)
 
-# Fixed wrist orientation (pen pointing straight down)
-# Rx, Ry, Rz in axis-angle (radians)
-TOOL_ORIENT = [math.pi, 0.0, 0.0]
+# ── Tool orientation (tilted 20° for marker holder) ──
+# Rotation vector for URScript: base = Rx(π) (straight down),
+# then tilted MARKER_TILT_DEG around the Y-axis of the base frame.
+
+def _rotation_matrix_to_rotvec(R: np.ndarray) -> List[float]:
+    """Convert a 3×3 rotation matrix to a rotation vector (axis × angle)."""
+    angle = math.acos(max(-1.0, min(1.0, (np.trace(R) - 1.0) / 2.0)))
+    if angle < 1e-10:
+        return [0.0, 0.0, 0.0]
+    if abs(angle - math.pi) < 1e-6:
+        # θ ≈ π  → extract axis from diagonal
+        diag = np.diag(R)
+        idx = int(np.argmax(diag))
+        col = R[:, idx]
+        axis = (col + np.eye(3)[idx]) / math.sqrt(2.0 * (1.0 + diag[idx]))
+        return (axis * angle).tolist()
+    axis = np.array([R[2, 1] - R[1, 2],
+                     R[0, 2] - R[2, 0],
+                     R[1, 0] - R[0, 1]]) / (2.0 * math.sin(angle))
+    return (axis * angle).tolist()
+
+def compute_tilted_tool_orient(tilt_rad: float) -> List[float]:
+    """Compute URScript rotation vector for tool tilted from vertical by *tilt_rad* around Y."""
+    # Base: 180° about X  → tool Z points down
+    Rx = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]], dtype=float)
+    # Tilt about Y
+    c, s = math.cos(tilt_rad), math.sin(tilt_rad)
+    Ry = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=float)
+    R = Ry @ Rx
+    return _rotation_matrix_to_rotvec(R)
+
+TOOL_ORIENT = compute_tilted_tool_orient(MARKER_TILT_RAD)
+
+# TCP offset for set_tcp() — marker tip position relative to flange
+# The marker extends 10 cm at 20° from the EE perpendicular.
+TCP_X = EE_DRAW_HEIGHT * math.sin(MARKER_TILT_RAD)   # horizontal offset  ≈ 3.4 cm
+TCP_Z = -EE_DRAW_HEIGHT * math.cos(MARKER_TILT_RAD)  # downward offset    ≈ -9.4 cm
+TCP_OFFSET = [TCP_X, 0.0, TCP_Z, 0.0, MARKER_TILT_RAD, 0.0]
 
 # ──────────────────────────────────────────────
 #  LOGGING & METRICS
@@ -330,6 +373,11 @@ def build_urscript(strokes: List[List[Tuple[float, float]]],
     lines.append("def draw_face():")
     lines.append(f"  # Canvas origin: {CANVAS_ORIGIN_ROBOT.tolist()}")
     lines.append(f"  # {len(strokes)} strokes after NN+2opt optimisation")
+    lines.append(f"  # Marker holder: {MARKER_TILT_DEG}° tilt, EE {EE_DRAW_HEIGHT*100:.0f} cm above canvas")
+    lines.append("")
+    lines.append(f"  # Set TCP for angled marker holder ({MARKER_TILT_DEG}° from perpendicular)")
+    lines.append(f"  set_tcp(p[{TCP_OFFSET[0]:.4f},{TCP_OFFSET[1]:.4f},{TCP_OFFSET[2]:.4f},"
+                 f"{TCP_OFFSET[3]:.4f},{TCP_OFFSET[4]:.4f},{TCP_OFFSET[5]:.4f}])")
     lines.append("")
 
     # Safe home position (close to canvas, definitely reachable by UR3)
