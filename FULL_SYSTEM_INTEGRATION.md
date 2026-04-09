@@ -6,6 +6,35 @@
 
 ---
 
+## Prerequisites & Setup
+
+**Important:** After any code changes, you must rebuild the affected packages before running:
+
+```bash
+# For motion planning changes:
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
+# For perception changes:
+cd ~/perception && colcon build --packages-select selfie_perception
+
+# For both (when changes span subsystems):
+cd ~/perception && colcon build --packages-select selfie_perception
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+```
+
+**Key files for ROS 2 Python packages:**
+- `setup.py` — Entry points for `ros2 run`
+- `setup.cfg` — (NEW) Tells colcon to install executables to `lib/<pkg>/` for `ros2 run` to find them
+- `package.xml` — Package dependencies and metadata
+
+If you add or modify entry points in `setup.py`, you may need to clean the build cache:
+```bash
+rm -rf ~/RS2/ros2_ws/build/ur3_motion_planning ~/RS2/ros2_ws/install/ur3_motion_planning
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+```
+
+---
+
 ## System Overview
 
 Three independent subsystems work together to capture a selfie and draw it with a UR3 robot arm:
@@ -96,6 +125,12 @@ Three independent subsystems work together to capture a selfie and draw it with 
 
 **Simulator (default, with MoveIt2 collision planning):**
 ```bash
+# Build both packages (required after any code changes)
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+cd ~/perception && colcon build --packages-select selfie_perception
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
 # Terminal 1 — Start the backend pipeline (MoveIt2 + Perception + Motion)
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
@@ -114,6 +149,12 @@ ros2 run ur_client_library start_ursim.sh -m ur3
 
 **Real Robot (replace IP with your UR3 address):**
 ```bash
+# Build both packages (required after any code changes)
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+cd ~/perception && colcon build --packages-select selfie_perception
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
 # Terminal 1 — Start the backend pipeline
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
@@ -140,6 +181,12 @@ python3 ~/gui/selfie_drawing_gui_ros2.py
 ### Mode 2: Perception + Motion with MoveIt2 (no GUI)
 
 ```bash
+# Build both packages (required after any code changes)
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+cd ~/perception && colcon build --packages-select selfie_perception
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
 # Place an image in ~/perception/input/
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
@@ -168,12 +215,17 @@ python3 ~/perception/src/selfie_perception/selfie_perception/test_perception.py
 
 **Motion only (MoveIt2 planning from pre-made strokes):**
 ```bash
+# Build the motion planning package
+source ~/RS2/ros2_ws/install/setup.bash
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
+# Terminal 1 — Start MoveIt2 with scene setup
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
   robot_ip:=192.168.56.101 \
   launch_rviz:=true
 
-# In another terminal, start the motion node in file mode:
+# Terminal 2 — Start the motion node in file mode:
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 run ur3_motion_planning motion_planning_node \
   --ros-args \
@@ -234,6 +286,7 @@ All three subsystems agree on this stroke format:
 | `integrated_pipeline.launch.py` | Includes `ur_moveit_config` launch. Adds delays and TimerActions to: (1) start move_group, (2) publish scene objects, (3) start drawing node. |
 | `ur3_motion_planning_moveit2.launch.py` | Updated to include scene setup (table + marker holder auto-published). |
 | `setup.py` | Added `add_table` console script entry point. |
+| `setup.cfg` | **NEW** — Required for ROS 2 Python packages. Tells `colcon` to install entry point executables to `lib/ur3_motion_planning/` instead of `bin/` (needed for `ros2 run`). |
 | `ur3_selfie_draw.py` | No changes (20° tilt + 15cm EE height already configured). |
 
 ---
@@ -357,6 +410,12 @@ This tells the robot: *"Treat this offset as the tool center for all movel/movej
 
 **Simulator:**
 ```bash
+# Build both packages (required after any code changes)
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+cd ~/perception && colcon build --packages-select selfie_perception
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
 # Terminal 1 — Full integrated pipeline with MoveIt2 + Perception + Motion
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
@@ -375,6 +434,12 @@ ros2 run ur_client_library start_ursim.sh -m ur3
 
 **Real Robot:**
 ```bash
+# Build both packages (required after any code changes)
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+cd ~/perception && colcon build --packages-select selfie_perception
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
 # Terminal 1
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
@@ -392,6 +457,11 @@ python3 ~/gui/selfie_drawing_gui_ros2.py
 ### Launch MoveIt2 Only (for scene setup or debugging)
 
 ```bash
+# Build the motion package
+source ~/RS2/ros2_ws/install/setup.bash
+cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
+# Launch
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
   robot_ip:=192.168.56.101 \

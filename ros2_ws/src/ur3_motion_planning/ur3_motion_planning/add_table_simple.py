@@ -2,8 +2,11 @@
 """
 Add table + marker-holder collision objects to the MoveIt2 planning scene.
 
+Uses the /apply_planning_scene service (synchronous) so objects are
+guaranteed to be ingested by move_group — no race with topic discovery.
+
 Objects:
-  1. table       – free-standing box below the robot base
+  1. table        – free-standing box below the robot base
   2. marker_holder – 160 × 180 mm rectangular prism ATTACHED to tool0
                      (moves with the end effector so MoveIt plans around it)
 """
@@ -11,10 +14,12 @@ Objects:
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose
-from moveit_msgs.msg import CollisionObject, AttachedCollisionObject
+from moveit_msgs.msg import (
+    CollisionObject, AttachedCollisionObject, PlanningScene,
+)
+from moveit_msgs.srv import ApplyPlanningScene
 from shape_msgs.msg import SolidPrimitive
 import math
-import time
 
 # ── Marker holder geometry (must match ur3_selfie_draw.py) ──
 MARKER_TILT_DEG = 20.0
@@ -25,10 +30,21 @@ EE_DRAW_HEIGHT  = 0.15  # m – end-effector height above canvas
 class ScenePublisher(Node):
     def __init__(self):
         super().__init__('scene_publisher')
-        self.collision_pub = self.create_publisher(
-            CollisionObject, '/collision_object', 10)
-        self.attached_pub = self.create_publisher(
-            AttachedCollisionObject, '/attached_collision_object', 10)
+        self.cli = self.create_client(ApplyPlanningScene, '/apply_planning_scene')
+        self.get_logger().info('Waiting for /apply_planning_scene service …')
+        self.cli.wait_for_service(timeout_sec=30.0)
+        self.get_logger().info('/apply_planning_scene service available')
+
+    # ── helpers ────────────────────────────────────────────────
+    def _apply(self, scene_msg: PlanningScene):
+        req = ApplyPlanningScene.Request()
+        req.scene = scene_msg
+        future = self.cli.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
+        if future.result() is not None and future.result().success:
+            return True
+        self.get_logger().error('ApplyPlanningScene call failed')
+        return False
 
     # ── Table ──────────────────────────────────────────────────
     def add_table(self):
@@ -47,71 +63,60 @@ class ScenePublisher(Node):
         box.dimensions = [1.7, 1.7, 0.2]
         obj.primitives.append(box)
 
-        self.collision_pub.publish(obj)
-        self.get_logger().info("Table collision object published")
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.world.collision_objects.append(obj)
+
+        if self._apply(scene):
+            self.get_logger().info('Table collision object applied')
 
     # ── Marker holder (attached to tool0) ─────────────────────
     def add_marker_holder(self):
-        """
-        Attach a 160 × 180 mm rectangular prism to the end effector.
-        The holder extends downward along the tilted marker axis from
-        the tool0 flange frame.
-        """
-        # Inner collision object describing the shape
         obj = CollisionObject()
         obj.header.frame_id = "tool0"
         obj.id = "marker_holder"
         obj.operation = CollisionObject.ADD
 
-        # Prism dimensions: 0.160 m × 0.180 m × EE_DRAW_HEIGHT
-        # (height = distance from flange to marker tip along holder axis)
         box = SolidPrimitive()
         box.type = SolidPrimitive.BOX
         box.dimensions = [0.160, 0.180, EE_DRAW_HEIGHT]
         obj.primitives.append(box)
 
-        # Pose in tool0 frame – centre of the box is halfway along the
-        # tilted holder axis (Y-axis tilt in the tool0 local frame).
-        half = EE_DRAW_HEIGHT / 2.0
+        # Offset so the TOP face of the box is flush with tool0 flange;
+        # the full height extends downward along the tilted marker axis.
+        full = EE_DRAW_HEIGHT
         pose = Pose()
-        pose.position.x = half * math.sin(MARKER_TILT_RAD)   # forward
+        pose.position.x = full * math.sin(MARKER_TILT_RAD)
         pose.position.y = 0.0
-        pose.position.z = -half * math.cos(MARKER_TILT_RAD)  # downward
-        # Orientation: tilt around Y by MARKER_TILT_RAD
+        pose.position.z = -full * math.cos(MARKER_TILT_RAD)
         pose.orientation.x = 0.0
         pose.orientation.y = math.sin(MARKER_TILT_RAD / 2.0)
         pose.orientation.z = 0.0
         pose.orientation.w = math.cos(MARKER_TILT_RAD / 2.0)
         obj.primitive_poses.append(pose)
 
-        # Wrap in AttachedCollisionObject
         attached = AttachedCollisionObject()
         attached.link_name = "tool0"
         attached.object = obj
-        # Allow the holder to touch the wrist links it is bolted to
         attached.touch_links = ["tool0", "wrist_3_link"]
 
-        self.attached_pub.publish(attached)
-        self.get_logger().info(
-            f"Marker holder attached to tool0 "
-            f"(160x180x{EE_DRAW_HEIGHT*1000:.0f} mm, tilt={MARKER_TILT_DEG}°)")
+        scene = PlanningScene()
+        scene.is_diff = True
+        scene.robot_state.attached_collision_objects.append(attached)
+        scene.robot_state.is_diff = True
+
+        if self._apply(scene):
+            self.get_logger().info(
+                f'Marker holder attached to tool0 '
+                f'(160x180x{EE_DRAW_HEIGHT*1000:.0f} mm, tilt={MARKER_TILT_DEG}°)')
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = ScenePublisher()
-
-    # Wait for publishers to be discovered
-    time.sleep(1.0)
-
     node.add_table()
-    time.sleep(0.3)
     node.add_marker_holder()
-
-    # Keep alive long enough for move_group to ingest the messages
-    for _ in range(5):
-        rclpy.spin_once(node, timeout_sec=0.5)
-
+    node.get_logger().info('Scene setup complete – shutting down')
     node.destroy_node()
     rclpy.shutdown()
 

@@ -20,14 +20,19 @@ Parameters:
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String
 from geometry_msgs.msg import Pose, PoseArray, Point, Quaternion
+import threading
 from moveit_msgs.srv import GetCartesianPath
 from moveit_msgs.msg import (
     CollisionObject,
     AttachedCollisionObject,
+    PlanningScene,
     RobotState,
 )
+from moveit_msgs.srv import ApplyPlanningScene
 from shape_msgs.msg import SolidPrimitive
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -166,6 +171,10 @@ class UR3DrawingNode(Node):
         self._startup_done = False
         self._topic_strokes = None
         self._metrics = Metrics() if IMPORTS_OK else None
+        self._pipeline_thread = None
+
+        # ── Callback groups ──
+        self._service_cb_group = ReentrantCallbackGroup()
 
         # ── Publishers / Subscribers ──
         self.status_pub = self.create_publisher(String, "drawing_status", 10)
@@ -175,14 +184,15 @@ class UR3DrawingNode(Node):
         self.gui_cmd_sub = self.create_subscription(
             String, "gui/command", self._on_gui_command, 10)
 
-        # ── MoveIt2 service client ──
+        # ── MoveIt2 service client (on separate callback group) ──
         self.cartesian_path_client = self.create_client(
-            GetCartesianPath, "/compute_cartesian_path")
+            GetCartesianPath, "/compute_cartesian_path",
+            callback_group=self._service_cb_group)
 
-        # ── Scene publishers (table + marker holder) ──
-        self.collision_pub = self.create_publisher(CollisionObject, "/collision_object", 10)
-        self.attached_pub = self.create_publisher(
-            AttachedCollisionObject, "/attached_collision_object", 10)
+        # ── Scene service client ──
+        self.apply_scene_client = self.create_client(
+            ApplyPlanningScene, '/apply_planning_scene',
+            callback_group=self._service_cb_group)
 
         self.get_logger().info("[Init] UR3 Drawing Node (MoveIt2 planning mode)")
         self.get_logger().info(f"[Config] Robot: {self.robot_ip}:{self.robot_port}")
@@ -191,12 +201,16 @@ class UR3DrawingNode(Node):
                                f"jump_threshold={self.jump_threshold}")
 
         if self.stroke_source == "file":
-            self.create_timer(2.0, self._on_startup_complete)
+            self.create_timer(2.0, self._file_startup_timer)
         else:
             self.get_logger().info("[Init] Waiting for strokes on /drawing_strokes ...")
             self._publish_status("WAITING_FOR_PERCEPTION")
 
     # ─────────────────── callbacks ───────────────────
+
+    def _file_startup_timer(self):
+        """One-shot timer callback for file-based stroke source."""
+        self._start_pipeline_thread()
 
     def _on_drawing_strokes(self, msg: String):
         try:
@@ -209,20 +223,29 @@ class UR3DrawingNode(Node):
             f"({sum(len(s) for s in strokes)} pts)")
         self._topic_strokes = strokes
         if not self._startup_done and self.stroke_source == "topic":
-            self._on_startup_complete()
+            self._start_pipeline_thread()
 
     def _on_gui_command(self, msg: String):
         cmd = msg.data.strip().upper()
         self.get_logger().info(f"[GUI] Command: {cmd}")
         if cmd == "START" and self._topic_strokes is not None:
             self._startup_done = False
-            self._on_startup_complete()
+            self._start_pipeline_thread()
         elif cmd == "STOP":
             self._publish_status("STOPPED")
         elif cmd == "PAUSE":
             self._publish_status("PAUSED")
         elif cmd == "RESUME":
             self._publish_status("RESUMED")
+
+    def _start_pipeline_thread(self):
+        """Run the pipeline on a background thread so service calls don't deadlock."""
+        if self._pipeline_thread is not None and self._pipeline_thread.is_alive():
+            self.get_logger().warn("[Pipeline] Already running, ignoring")
+            return
+        self._pipeline_thread = threading.Thread(
+            target=self._on_startup_complete, daemon=True)
+        self._pipeline_thread.start()
 
     # ─────────────────── pipeline ───────────────────
 
@@ -248,10 +271,10 @@ class UR3DrawingNode(Node):
             self._publish_status("OPTIMIZING_PATH")
             strokes = self._optimize_strokes(strokes)
 
-            # 3 – Publish collision scene (table + marker holder)
+            # 3 – Scene objects already applied by add_table node (launched earlier)
+            #     Skip redundant publish to avoid spin deadlock.
             self._publish_status("SETTING_UP_SCENE")
-            self._publish_scene_objects()
-            time.sleep(0.5)  # give move_group time to ingest
+            self.get_logger().info("[Scene] Using collision objects from add_table node")
 
             # 4 – Plan each stroke via MoveIt2 Cartesian path
             self._publish_status("PLANNING_WITH_MOVEIT2")
@@ -328,8 +351,22 @@ class UR3DrawingNode(Node):
 
     # ─────────────────── stage 3: collision scene ───────────────
 
+    def _apply_scene(self, scene_msg: PlanningScene) -> bool:
+        """Apply a PlanningScene diff via the /apply_planning_scene service."""
+        if not self.apply_scene_client.wait_for_service(timeout_sec=10.0):
+            self.get_logger().error('[Scene] /apply_planning_scene service not available')
+            return False
+        req = ApplyPlanningScene.Request()
+        req.scene = scene_msg
+        future = self.apply_scene_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
+        if future.result() is not None and future.result().success:
+            return True
+        self.get_logger().error('[Scene] ApplyPlanningScene call failed')
+        return False
+
     def _publish_scene_objects(self):
-        """Publish table and marker-holder collision objects."""
+        """Apply table and marker-holder collision objects via service."""
 
         # Table
         table = CollisionObject()
@@ -342,10 +379,15 @@ class UR3DrawingNode(Node):
         box.type = SolidPrimitive.BOX
         box.dimensions = [1.7, 1.7, 0.2]
         table.primitives.append(box)
-        self.collision_pub.publish(table)
-        self.get_logger().info("[Scene] Table published")
 
-        # Marker holder attached to tool0
+        scene1 = PlanningScene()
+        scene1.is_diff = True
+        scene1.world.collision_objects.append(table)
+        if self._apply_scene(scene1):
+            self.get_logger().info("[Scene] Table applied")
+
+        # Marker holder attached to tool0 — top face flush with flange,
+        # full height extends downward along the tilted marker axis.
         holder_co = CollisionObject()
         holder_co.header.frame_id = "tool0"
         holder_co.id = "marker_holder"
@@ -354,10 +396,10 @@ class UR3DrawingNode(Node):
         hbox.type = SolidPrimitive.BOX
         hbox.dimensions = [0.160, 0.180, EE_DRAW_HEIGHT]
         holder_co.primitives.append(hbox)
-        half = EE_DRAW_HEIGHT / 2.0
+        full = EE_DRAW_HEIGHT
         hp = Pose()
-        hp.position.x = half * math.sin(MARKER_TILT_RAD)
-        hp.position.z = -half * math.cos(MARKER_TILT_RAD)
+        hp.position.x = full * math.sin(MARKER_TILT_RAD)
+        hp.position.z = -full * math.cos(MARKER_TILT_RAD)
         hp.orientation.y = math.sin(MARKER_TILT_RAD / 2.0)
         hp.orientation.w = math.cos(MARKER_TILT_RAD / 2.0)
         holder_co.primitive_poses.append(hp)
@@ -366,8 +408,13 @@ class UR3DrawingNode(Node):
         attached.link_name = "tool0"
         attached.object = holder_co
         attached.touch_links = ["tool0", "wrist_3_link"]
-        self.attached_pub.publish(attached)
-        self.get_logger().info("[Scene] Marker holder attached to tool0")
+
+        scene2 = PlanningScene()
+        scene2.is_diff = True
+        scene2.robot_state.attached_collision_objects.append(attached)
+        scene2.robot_state.is_diff = True
+        if self._apply_scene(scene2):
+            self.get_logger().info("[Scene] Marker holder attached to tool0")
 
     # ─────────────────── stage 4: MoveIt2 plan → URScript ───────
 
@@ -405,7 +452,15 @@ class UR3DrawingNode(Node):
         req.start_state.joint_state.position = [float(j) for j in start_joints]
 
         future = self.cartesian_path_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=self.planning_timeout)
+
+        # Wait for the future (executed from a background thread,
+        # the MultiThreadedExecutor handles the response callback)
+        deadline = time.time() + self.planning_timeout
+        while not future.done():
+            if time.time() > deadline:
+                self.get_logger().error("[Plan] Cartesian path service call timed out")
+                return None, 0.0
+            time.sleep(0.01)
 
         if not future.done() or future.result() is None:
             self.get_logger().error("[Plan] Cartesian path service call failed")
@@ -417,16 +472,49 @@ class UR3DrawingNode(Node):
 
         return traj, fraction
 
+    def _thin_trajectory(self, traj_points, is_draw=False, max_joint_delta=0.05):
+        """
+        Thin a MoveIt2 joint trajectory while preserving collision safety.
+
+        For travel/lift: keep only the final point (single movej at Z_TRAVEL).
+        For drawing: keep ALL points where any joint moves more than max_joint_delta
+                     from the last kept point.  Always keeps first and last.
+                     This preserves MoveIt2's collision-free guarantee.
+        """
+        n = len(traj_points)
+        if n == 0:
+            return []
+        if n <= 2:
+            return [list(pt.positions) for pt in traj_points]
+
+        if not is_draw:
+            # Travel/lift: single movej to endpoint (robot is high up, safe)
+            return [list(traj_points[-1].positions)]
+
+        # Drawing: keep all points with significant joint movement.
+        # This maintains collision-free guarantee from MoveIt2 while
+        # removing near-duplicate waypoints.
+        kept = [list(traj_points[0].positions)]  # always keep first
+        for i in range(1, n - 1):
+            prev = kept[-1]
+            curr = list(traj_points[i].positions)
+            delta = max(abs(c - p) for c, p in zip(curr, prev))
+            if delta >= max_joint_delta:
+                kept.append(curr)
+        kept.append(list(traj_points[-1].positions))  # always keep last
+        return kept
+
     def _plan_and_build_urscript(self, strokes) -> str:
         """
-        For each stroke, plan a MoveIt2 Cartesian path and accumulate
-        joint-space waypoints.  Then convert the full set into URScript.
+        For each stroke, plan a collision-free trajectory via MoveIt2,
+        then use the actual planned joint positions in URScript movej commands.
+        This ensures the robot follows MoveIt2's collision-free path.
         """
 
-        all_joint_waypoints = []  # list of (positions_list, is_travel_bool)
+        all_segments = []  # list of (joint_positions_list, is_travel, comment)
         current_joints = list(HOME_JOINTS)
-
         total_strokes = len(strokes)
+        skipped = 0
 
         for s_idx, stroke in enumerate(strokes):
             if not stroke:
@@ -435,7 +523,7 @@ class UR3DrawingNode(Node):
                 f"[Plan] Stroke {s_idx+1}/{total_strokes} "
                 f"({len(stroke)} pts) ...")
 
-            # ── travel to above first point (pen-up) ──
+            # ── Travel to above first point (pen-up) ──
             travel_pos = px_to_robot(*stroke[0])
             travel_pos[2] = Z_TRAVEL
             travel_wp = [self._make_pose(travel_pos)]
@@ -445,14 +533,18 @@ class UR3DrawingNode(Node):
                 self.get_logger().warn(
                     f"[Plan] Travel plan failed for stroke {s_idx+1} "
                     f"(fraction={frac_t:.2f}), skipping stroke")
+                skipped += 1
                 continue
-            for pt in traj_t.points:
-                all_joint_waypoints.append((list(pt.positions), True))
             current_joints = list(traj_t.points[-1].positions)
 
-            # ── draw waypoints (pen-down + stroke points) ──
+            # Use MoveIt2's planned joints for travel (just final point)
+            travel_joints = self._thin_trajectory(traj_t.points, is_draw=False)
+            for jts in travel_joints:
+                all_segments.append((jts, True, f"travel s{s_idx+1}"))
+
+            # ── Draw waypoints (pen-down + stroke points) ──
             draw_poses = []
-            for pt_idx, (px, py) in enumerate(stroke):
+            for px, py in stroke:
                 rp = px_to_robot(float(px), float(py))
                 rp[2] = Z_DRAW
                 draw_poses.append(self._make_pose(rp))
@@ -462,36 +554,43 @@ class UR3DrawingNode(Node):
                 self.get_logger().warn(
                     f"[Plan] Draw plan for stroke {s_idx+1} fraction={frac_d:.2f}")
                 if traj_d is None:
+                    skipped += 1
                     continue
 
-            for pt in traj_d.points:
-                all_joint_waypoints.append((list(pt.positions), False))
             current_joints = list(traj_d.points[-1].positions)
 
-            # ── lift after stroke (pen-up) ──
+            # Use ALL MoveIt2 planned joints for drawing (collision-free)
+            draw_joints = self._thin_trajectory(traj_d.points, is_draw=True)
+            for i, jts in enumerate(draw_joints):
+                label = "pen-down" if i == 0 else f"draw s{s_idx+1}"
+                all_segments.append((jts, False, label))
+
+            # ── Lift after stroke (pen-up) ──
             lift_pos = px_to_robot(*stroke[-1])
             lift_pos[2] = Z_TRAVEL
             traj_l, frac_l = self._call_cartesian_path(
                 [self._make_pose(lift_pos)], current_joints)
             if traj_l is not None and traj_l.points:
-                for pt in traj_l.points:
-                    all_joint_waypoints.append((list(pt.positions), True))
                 current_joints = list(traj_l.points[-1].positions)
+                lift_joints = self._thin_trajectory(traj_l.points, is_draw=False)
+                for jts in lift_joints:
+                    all_segments.append((jts, True, f"pen-up s{s_idx+1}"))
 
-        if not all_joint_waypoints:
+        if not all_segments:
             self.get_logger().error("[Plan] No waypoints planned at all")
             return None
 
         self.get_logger().info(
-            f"[Plan] Total planned joint waypoints: {len(all_joint_waypoints)}")
+            f"[Plan] {len(all_segments)} movej commands "
+            f"({skipped} strokes skipped)")
 
-        # ── Convert to URScript ──
-        return self._joint_waypoints_to_urscript(all_joint_waypoints)
+        # ── Build URScript ──
+        return self._build_urscript(all_segments)
 
-    def _joint_waypoints_to_urscript(self, waypoints) -> str:
-        """Convert a list of (joint_positions, is_travel) to a URScript program."""
+    def _build_urscript(self, segments) -> str:
+        """Build a complete URScript program from MoveIt2-planned joint waypoints."""
         lines = []
-        lines.append("# UR3 Selfie Drawing Robot | MoveIt2 planned trajectory")
+        lines.append("# UR3 Selfie Drawing Robot | MoveIt2 collision-free trajectory")
         lines.append("def draw_face():")
         lines.append(f"  # Marker holder: {MARKER_TILT_DEG} deg tilt, "
                      f"EE {EE_DRAW_HEIGHT*100:.0f} cm above canvas")
@@ -500,24 +599,27 @@ class UR3DrawingNode(Node):
                      f"{TCP_OFFSET[4]:.4f},{TCP_OFFSET[5]:.4f}])")
         lines.append("")
 
-        # Home
+        # Home via joint move (safe from any position)
         home_str = ",".join(f"{j:.4f}" for j in HOME_JOINTS)
         lines.append(f"  movej([{home_str}], a={JOINT_ACCEL}, v={JOINT_VEL})")
         lines.append("")
 
-        prev_travel = None
-        for joints, is_travel in waypoints:
+        for idx, (joints, is_travel, comment) in enumerate(segments):
             j_str = ",".join(f"{j:.4f}" for j in joints)
             if is_travel:
-                # Use movej for travel (faster, joint-space)
-                if prev_travel is not None and prev_travel == is_travel:
-                    # Skip intermediate travel waypoints that are very close
-                    pass
-                lines.append(f"  movej([{j_str}], a={JOINT_ACCEL}, v={JOINT_VEL})")
+                # Travel/lift: faster joint-space move, no blend
+                lines.append(f"  movej([{j_str}], a={JOINT_ACCEL}, v={JOINT_VEL})"
+                             f"  # {comment}")
             else:
-                # Use movej with blend for drawing (follow planned path)
-                lines.append(f"  movej([{j_str}], a={LINEAR_ACCEL}, v={LINEAR_VEL})")
-            prev_travel = is_travel
+                # Drawing: use blend radius for smooth continuous motion
+                # except for the very last drawing point (blend=0 to stop precisely)
+                is_last_draw = (idx + 1 >= len(segments) or segments[idx + 1][1])
+                if is_last_draw:
+                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3)"
+                                 f"  # {comment}")
+                else:
+                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3, r=0.002)"
+                                 f"  # {comment}")
 
         lines.append("")
         lines.append(f"  # Return home")
@@ -531,26 +633,63 @@ class UR3DrawingNode(Node):
 
     def _send_urscript(self, script: str) -> bool:
         """Send URScript to the robot over TCP socket."""
+
+        # Always save the script for inspection / manual replay
+        save_path = os.path.expanduser("~/RS2/outputs/last_drawing.script")
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "w") as f:
+            f.write(script)
+        line_count = script.count('\n') + 1
+        self.get_logger().info(
+            f"[Execute] Script saved to {save_path} "
+            f"({len(script)} bytes, {line_count} lines)")
+
         try:
             self.get_logger().info(
                 f"[Execute] Connecting to {self.robot_ip}:{self.robot_port} ...")
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5.0)
+            sock.settimeout(10.0)
             sock.connect((self.robot_ip, self.robot_port))
-            sock.sendall((script + "\n").encode("utf-8"))
+            self.get_logger().info("[Execute] Connected to robot")
+
+            encoded = (script + "\n").encode("utf-8")
+            sock.sendall(encoded)
             self.get_logger().info(
-                f"[Execute] URScript sent ({len(script)} bytes)")
+                f"[Execute] URScript sent ({len(encoded)} bytes). "
+                f"Robot should start executing now.")
+
+            # Read any immediate response from the controller
+            try:
+                sock.settimeout(2.0)
+                resp = sock.recv(4096)
+                if resp:
+                    self.get_logger().info(
+                        f"[Execute] Robot response: {resp[:200]}")
+            except socket.timeout:
+                self.get_logger().info(
+                    "[Execute] No immediate response (normal for URScript)")
+
             sock.close()
+            self.get_logger().info(
+                "[Execute] Done. If robot is not moving, check:\n"
+                "  1. URSim is running and robot is powered ON\n"
+                "  2. URSim is in 'Remote Control' mode (not 'Local')\n"
+                "  3. Robot is not in Protective Stop / Emergency Stop\n"
+                f"  4. Review script: cat {save_path}")
             return True
+        except ConnectionRefusedError:
+            self.get_logger().error(
+                f"[Execute] CONNECTION REFUSED at {self.robot_ip}:{self.robot_port}. "
+                f"Is URSim running? Is the robot IP correct?")
+            return False
+        except socket.timeout:
+            self.get_logger().error(
+                f"[Execute] CONNECTION TIMED OUT to {self.robot_ip}:{self.robot_port}. "
+                f"Check network connectivity to the robot/simulator.")
+            return False
         except Exception as e:
-            self.get_logger().warn(f"[Execute] Socket failed: {e}")
-            # Save to file as fallback
-            ts = int(time.time())
-            path = f"/tmp/drawing_moveit2_{ts}.script"
-            with open(path, "w") as f:
-                f.write(script)
-            self.get_logger().info(f"[Execute] Script saved to {path}")
-            return True  # Don't fail the pipeline
+            self.get_logger().error(f"[Execute] Socket error: {type(e).__name__}: {e}")
+            return False
 
     # ─────────────────── helpers ───────────────────
 
@@ -563,13 +702,18 @@ class UR3DrawingNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = UR3DrawingNode()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

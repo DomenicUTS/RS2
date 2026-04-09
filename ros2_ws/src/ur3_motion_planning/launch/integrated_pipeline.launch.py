@@ -24,8 +24,11 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.conditions import LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution,
+)
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -107,7 +110,7 @@ def generate_launch_description():
         ),
     ]
 
-    # ── MoveIt2 (move_group + RViz) ──
+    # ── MoveIt2 (move_group + RViz, NO servo_node) ──
     ur_moveit_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
@@ -118,8 +121,62 @@ def generate_launch_description():
             'robot_ip': LaunchConfiguration('robot_ip'),
             'ur_type': LaunchConfiguration('ur_type'),
             'launch_rviz': LaunchConfiguration('launch_rviz'),
+            'launch_servo': 'false',
             'use_sim_time': 'false',
         }.items(),
+    )
+
+    # ── Robot State Publisher (publishes URDF → /tf for RViz) ──
+    ur_type = LaunchConfiguration('ur_type')
+    robot_description_content = Command([
+        PathJoinSubstitution([FindExecutable(name='xacro')]),
+        ' ',
+        PathJoinSubstitution(
+            [FindPackageShare('ur_description'), 'urdf', 'ur.urdf.xacro']
+        ),
+        ' robot_ip:=xxx.yyy.zzz.www',
+        ' safety_limits:=true',
+        ' safety_pos_margin:=0.15',
+        ' safety_k_position:=20',
+        ' name:=ur',
+        ' ur_type:=', ur_type,
+        ' script_filename:=ros_control.urscript',
+        ' input_recipe_filename:=rtde_input_recipe.txt',
+        ' output_recipe_filename:=rtde_output_recipe.txt',
+        ' prefix:=',
+        ' joint_limit_params:=',
+        PathJoinSubstitution(
+            [FindPackageShare('ur_description'), 'config', ur_type, 'joint_limits.yaml']
+        ),
+        ' kinematics_params:=',
+        PathJoinSubstitution(
+            [FindPackageShare('ur_description'), 'config', ur_type, 'default_kinematics.yaml']
+        ),
+        ' physical_params:=',
+        PathJoinSubstitution(
+            [FindPackageShare('ur_description'), 'config', ur_type, 'physical_parameters.yaml']
+        ),
+        ' visual_params:=',
+        PathJoinSubstitution(
+            [FindPackageShare('ur_description'), 'config', ur_type, 'visual_parameters.yaml']
+        ),
+    ])
+    robot_description = {
+        'robot_description': ParameterValue(robot_description_content, value_type=str)
+    }
+
+    robot_state_publisher_node = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        output='screen',
+        parameters=[robot_description],
+    )
+
+    # ── Joint State Publisher (provides /joint_states for TF + MoveIt2) ──
+    joint_state_publisher_node = Node(
+        package='joint_state_publisher',
+        executable='joint_state_publisher',
+        parameters=[robot_description],
     )
 
     # ── Scene setup (table + marker holder) — delayed to let move_group start ──
@@ -156,6 +213,8 @@ def generate_launch_description():
     )
 
     ld = LaunchDescription(declared_arguments)
+    ld.add_action(robot_state_publisher_node)
+    ld.add_action(joint_state_publisher_node)
     ld.add_action(ur_moveit_launch)
     ld.add_action(image_loader)
     for n in perception_nodes:
