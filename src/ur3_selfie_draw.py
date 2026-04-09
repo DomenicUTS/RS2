@@ -42,14 +42,14 @@ CANVAS_PX_H = 300
 
 # ── Marker holder geometry ──
 # 3D-printed part holds the marker at 20° from the end-effector perpendicular.
-# The end effector stays 10 cm above the canvas; the tilted marker reaches down.
+# The end effector stays 15 cm above the canvas; the tilted marker reaches down.
 MARKER_TILT_DEG = 20.0                          # degrees from perpendicular
 MARKER_TILT_RAD = math.radians(MARKER_TILT_DEG)
-EE_DRAW_HEIGHT  = 0.10                          # end-effector height above canvas (m)
+EE_DRAW_HEIGHT  = 0.15                          # end-effector height above canvas (m)
 
 # Z heights (end effector, NOT marker tip)
 CANVAS_SURFACE_Z = CANVAS_ORIGIN_ROBOT[2]                      # table / canvas surface
-Z_DRAW    = CANVAS_SURFACE_Z + EE_DRAW_HEIGHT                  # EE at 10 cm above canvas when drawing
+Z_DRAW    = CANVAS_SURFACE_Z + EE_DRAW_HEIGHT                  # EE at 15 cm above canvas when drawing
 Z_TRAVEL  = CANVAS_SURFACE_Z + EE_DRAW_HEIGHT + 0.060          # pen-up (6 cm above draw height)
 
 # Safe home position (close to canvas, definitely reachable by UR3)

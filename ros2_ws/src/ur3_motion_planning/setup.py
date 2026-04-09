@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'motion_planning_node = ur3_motion_planning.ur3_drawing_node:main',
+            'add_table = ur3_motion_planning.add_table_simple:main',
         ],
     },
 )

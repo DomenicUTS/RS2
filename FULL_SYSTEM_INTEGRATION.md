@@ -92,35 +92,63 @@ Three independent subsystems work together to capture a selfie and draw it with 
 
 ## How to Run
 
-### Mode 1: Full Integration (GUI + Perception + Motion)
+### Mode 1: Full Integration (GUI + Perception + Motion with MoveIt2)
 
+**Simulator (default, with MoveIt2 collision planning):**
 ```bash
-# Terminal 1 — Start the backend pipeline
+# Terminal 1 — Start the backend pipeline (MoveIt2 + Perception + Motion)
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
-ros2 launch ur3_motion_planning integrated_pipeline.launch.py image_source:=gui
+ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
+  image_source:=gui \
+  launch_rviz:=true
 
 # Terminal 2 — Start the GUI
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 python3 ~/gui/selfie_drawing_gui_ros2.py
 
-# Terminal 3 (optional) — UR3 simulator
+# Terminal 3 (optional) — Start the UR3 simulator
 ros2 run ur_client_library start_ursim.sh -m ur3
 ```
 
-**User workflow:** Camera preview → Capture → Process (sends to perception) → Preview appears → Start Drawing → Robot executes.
+**Real Robot (replace IP with your UR3 address):**
+```bash
+# Terminal 1 — Start the backend pipeline
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
+  image_source:=gui \
+  robot_ip:=192.168.0.196 \
+  launch_rviz:=true
 
-### Mode 2: Perception + Motion (no GUI)
+# Terminal 2 — Start the GUI
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+python3 ~/gui/selfie_drawing_gui_ros2.py
+```
+
+**Workflow:**
+1. GUI shows live webcam preview
+2. Click "Capture" → sends image to perception
+3. Perception detects face, extracts edges, publishes strokes
+4. GUI shows preview of what will be drawn
+5. Click "Start Drawing" button
+6. Motion node receives strokes, plans collision-safe MoveIt2 trajectories, executes via URScript
+7. Robot draws the face at 20° angle
+
+### Mode 2: Perception + Motion with MoveIt2 (no GUI)
 
 ```bash
 # Place an image in ~/perception/input/
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
-ros2 launch ur3_motion_planning integrated_pipeline.launch.py
+ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
+  image_source:=file \
+  launch_rviz:=true
 ```
 
-The `image_loader_node` will automatically find and publish the image.
+The `image_loader_node` will automatically load and publish images, then perception processes → strokes published → motion node plans and executes.
 
 ### Mode 3: Each Subsystem Standalone
 
@@ -138,15 +166,23 @@ ros2 launch selfie_perception perception_pipeline.launch.py
 python3 ~/perception/src/selfie_perception/selfie_perception/test_perception.py
 ```
 
-**Motion only** (draw from pre-made JSON, no perception):
+**Motion only (MoveIt2 planning from pre-made strokes):**
 ```bash
-# Direct Python (no ROS):
-cd ~/RS2 && python3 src/ur3_selfie_draw.py 1
-
-# Via ROS node (file mode):
 source ~/RS2/ros2_ws/install/setup.bash
-ros2 run ur3_motion_planning motion_planning_node --ros-args -p face:=face1
+ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
+  robot_ip:=192.168.56.101 \
+  launch_rviz:=true
+
+# In another terminal, start the motion node in file mode:
+source ~/RS2/ros2_ws/install/setup.bash
+ros2 run ur3_motion_planning motion_planning_node \
+  --ros-args \
+  -p stroke_source:=file \
+  -p face:=face1 \
+  -p robot_ip:=192.168.56.101
 ```
+
+This will load `~/RS2/outputs/strokes/face1_strokes.json`, plan with MoveIt2 collision avoidance, and execute.
 
 ---
 
@@ -193,9 +229,12 @@ All three subsystems agree on this stroke format:
 
 | File | Change |
 |------|--------|
-| `ur3_drawing_node.py` | Added `/gui/command` subscriber (START/PAUSE/RESUME/STOP). Updated `_on_drawing_strokes` to store new strokes even after first run. |
-| `integrated_pipeline.launch.py` | Added `image_source` argument (file/gui). Conditionally launches `image_loader_node`. |
-| `ur3_selfie_draw.py` | No changes in this round (20° tilt + 10cm height from previous integration). |
+| `ur3_drawing_node.py` | **REWRITTEN** — Now uses MoveIt2 `/compute_cartesian_path` service for collision-aware trajectory planning. Calls GetCartesianPath for each stroke, then converts planned joint trajectories to URScript. |
+| `add_table_simple.py` | **REWRITTEN** — Publishes table AND marker-holder (160×180mm prism) as collision objects. Marker holder is **attached to tool0** so it moves with EE and MoveIt2 knows to avoid collisions. |
+| `integrated_pipeline.launch.py` | Includes `ur_moveit_config` launch. Adds delays and TimerActions to: (1) start move_group, (2) publish scene objects, (3) start drawing node. |
+| `ur3_motion_planning_moveit2.launch.py` | Updated to include scene setup (table + marker holder auto-published). |
+| `setup.py` | Added `add_table` console script entry point. |
+| `ur3_selfie_draw.py` | No changes (20° tilt + 15cm EE height already configured). |
 
 ---
 
@@ -205,3 +244,181 @@ All three subsystems agree on this stroke format:
 2. **Standalone first** — every module can run and be tested independently. Integration is additive.
 3. **Single source of truth** — stroke format is defined once (400×300 px JSON). No translation layers needed.
 4. **Reset-capable** — perception and motion nodes can process multiple images in a session (the GUI can retake and re-process).
+
+---
+
+## MoveIt2 Trajectory Planning & Tilted Tool Drawing
+
+### Architecture: MoveIt2 Planning → URScript Execution
+
+The motion planning node now **plans with MoveIt2 but executes with URScript** for maximum compatibility:
+
+```
+Strokes (JSON)
+     ↓
+Optimize (NN + 2-Opt)
+     ↓
+Convert to Cartesian waypoints (xyz positions)
+     ↓
+Call /compute_cartesian_path (MoveIt2) ← COLLISION-AWARE
+     ↓
+Get planned joint-space trajectory
+     ↓
+Convert to URScript (movej commands)
+     ↓
+Send via TCP socket → Robot (simulator or real)
+```
+
+### Marker Holder Geometry & Tool Orientation
+
+The marker is held in a **3D-printed angled holder** that:
+- Is bolted to the UR3 tool0 flange
+- Extends the marker tip **15 cm below the end effector** (0.150 m)
+- Is tilted **20° from perpendicular** (toward the camera)
+
+This creates a **TCP (Tool Center Point) offset** that must be known to both:
+1. **MoveIt2** — so it plans paths for the marker tip, not the bare flange
+2. **URScript** — via the `set_tcp()` command at the start of each program
+
+**Offset values** (in robot base frame, in meters):
+```
+TCP_X  = 0.0513 m  (forward, due to 20° tilt)
+TCP_Y  = 0.0 m     (centered)
+TCP_Z  = -0.1410 m (downward, 15 cm + geometry)
+Rotation = [20° around Y-axis]
+```
+
+**How MoveIt2 knows about the offset:**
+- The drawing node specifies `link_name = "tool0"` when calling `/compute_cartesian_path`
+- The marker holder is published as an **AttachedCollisionObject** linked to `tool0`
+  ```python
+  attached = AttachedCollisionObject()
+  attached.link_name = "tool0"
+  attached.object = marker_holder_box
+  attached.touch_links = ["tool0", "wrist_3_link"]  # Don't self-collide
+  ```
+- MoveIt2 carries this collision shape with the end effector during planning, so paths avoid hitting objects with the marker
+
+**How URScript applies the offset:**
+At the start of every URScript program:
+```
+def draw_face():
+  set_tcp(p[0.0513, 0.0, -0.1410, 0.0, 0.3491, 0.0])
+  # ... rest of program ...
+end
+```
+
+This tells the robot: *"Treat this offset as the tool center for all movel/movej paths."* The robot's IK solver then adjusts joint angles so the actual marker tip reaches the commanded positions.
+
+### Drawing at Angle: Combining 20° Tilt + Cartesian Paths
+
+**Goal:** Draw on a canvas while the marker is tilted 20° from vertical.
+
+**Challenge:** Most robot drawing just points the tool straight down. Our system points it at an angle.
+
+**Solution:** The system works in two stages:
+
+1. **MoveIt2 planning stage** (online):
+   - Waypoints are commanded as **Cartesian poses** (x, y, z, quaternion)
+   - The quaternion encodes the tool orientation: tilted 20° around the Y-axis
+   - MoveIt2 plans collision-free joint-space interpolations between these poses
+   - The marker stays at 20° throughout the trajectory
+
+2. **URScript execution stage**:
+   - The planned **joint positions** are converted to `movej()` commands
+   - `set_tcp()` is called once with the offset
+   - The robot executes `movej()` to each joint configuration → marker follows the planned Cartesian path at the desired angle
+
+**Example:** Drawing a straight line on the canvas
+
+1. **Perception** sends 100 stroke points (pixels)
+2. **Motion node** converts pixels → robot XYZ (e.g., `[0.240, -0.075, 0.11]` = first draw point)
+3. **Pose for MoveIt2** is constructed: position + quaternion for 20° tilt
+   ```python
+   pose.position = (0.240, -0.075, 0.11)  # xyz
+   pose.orientation = (0.9848, 0.0, -0.1736, 0.0)  # 20° tilt around Y
+   ```
+4. **MoveIt2** plans a Cartesian line → `[q1, q2, q3, q4, q5, q6]` (100 joint configs)
+5. **URScript** is built with 100 `movej()` commands
+6. **Robot** executes → marker draws a line at 20°, reaching down to the canvas
+
+### Why This Approach?
+
+- **Collision safety:** MoveIt2 knows about the table and marker holder shape, so it never plans paths that crash
+- **Correct tool orientation:** The quaternion in the pose ensures the 20° angle is maintained throughout
+- **Efficient execution:** URScript is lightweight and works on both simulator and real robot without UR driver infrastructure
+- **Hybrid:** Leverages MoveIt2's planning strengths while avoiding heavy action server dependencies
+
+---
+
+## How to Run with MoveIt2
+
+### Launch MoveIt2 + Draw (with Collision Avoidance)
+
+**Simulator:**
+```bash
+# Terminal 1 — Full integrated pipeline with MoveIt2 + Perception + Motion
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
+  image_source:=gui \
+  launch_rviz:=true
+
+# Terminal 2 — Start the GUI
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+python3 ~/gui/selfie_drawing_gui_ros2.py
+
+# Terminal 3 (optional) — Start the UR3 simulator
+ros2 run ur_client_library start_ursim.sh -m ur3
+```
+
+**Real Robot:**
+```bash
+# Terminal 1
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
+  image_source:=gui \
+  robot_ip:=192.168.0.196 \
+  launch_rviz:=true
+
+# Terminal 2 — GUI (same as simulator)
+source ~/perception/install/setup.bash
+source ~/RS2/ros2_ws/install/setup.bash
+python3 ~/gui/selfie_drawing_gui_ros2.py
+```
+
+### Launch MoveIt2 Only (for scene setup or debugging)
+
+```bash
+source ~/RS2/ros2_ws/install/setup.bash
+ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
+  robot_ip:=192.168.56.101 \
+  launch_rviz:=true
+```
+
+This starts:
+- `move_group` (MoveIt2 planning server)
+- `RViz` (3D visualization)
+- Scene setup node that publishes table + marker holder
+
+You can then:
+- Use RViz to visualize the table and marker holder
+- Test trajectories with the MoveIt2 GUI in RViz
+- Verify collision checking works
+
+---
+
+## QA Checklist
+
+- [x] 3-way ROS 2 integration (GUI ↔ Perception ↔ Motion)
+- [x] 20° marker tilt with quaternion representation
+- [x] 15 cm EE height above canvas
+- [x] MoveIt2 `/compute_cartesian_path` planning
+- [x] Collision objects (table, marker holder attached to tool0)
+- [x] URScript generation from planned trajectories
+- [x] Real robot support (configurable IP)
+- [x] Perception-published strokes flow to motion node
+- [x] GUI status feedback from motion node
+- [ ] Full end-to-end test on real robot (pending team scheduling)

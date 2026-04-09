@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Launch file for UR3 Motion Planning with MoveIt2 (All-in-One)
-Starts MoveIt2 + RViz + Motion Planning Node in single command
+Launch file for UR3 MoveIt2 setup.
+Starts MoveIt2 + RViz, then adds table + marker-holder collision objects.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -53,11 +53,22 @@ def generate_launch_description():
             'use_sim_time': LaunchConfiguration('use_sim_time'),
         }.items(),
     )
+
+    # Add table + marker-holder collision objects after move_group starts
+    scene_setup = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='ur3_motion_planning',
+                executable='add_table',
+                name='scene_setup',
+                output='screen',
+            ),
+        ],
+    )
     
     ld = LaunchDescription(declared_arguments)
     ld.add_action(ur_moveit_launch)
+    ld.add_action(scene_setup)
     
     return ld
-
-
-

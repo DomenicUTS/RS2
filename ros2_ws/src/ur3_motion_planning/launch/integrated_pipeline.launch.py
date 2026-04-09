@@ -21,10 +21,12 @@ Usage:
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.conditions import LaunchConfigurationEquals
-from launch.substitutions import LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -38,6 +40,11 @@ def generate_launch_description():
             'robot_port',
             default_value='30002',
             description='URScript primary interface port',
+        ),
+        DeclareLaunchArgument(
+            'ur_type',
+            default_value='ur3',
+            description='UR robot type',
         ),
         DeclareLaunchArgument(
             'enable_optimization',
@@ -54,6 +61,11 @@ def generate_launch_description():
             default_value='file',
             description="'file' = image_loader_node watches ~/perception/input/; "
                         "'gui' = GUI publishes on /raw_image (don't start image_loader)",
+        ),
+        DeclareLaunchArgument(
+            'launch_rviz',
+            default_value='true',
+            description='Launch RViz with MoveIt2 visualisation',
         ),
     ]
 
@@ -95,23 +107,59 @@ def generate_launch_description():
         ),
     ]
 
-    # ── Motion-planning node (topic mode — waits for perception strokes) ──
-    motion_node = Node(
-        package='ur3_motion_planning',
-        executable='motion_planning_node',
-        name='ur3_drawing_node',
-        output='screen',
-        parameters=[{
+    # ── MoveIt2 (move_group + RViz) ──
+    ur_moveit_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [FindPackageShare('ur_moveit_config'), 'launch', 'ur_moveit.launch.py']
+            )
+        ),
+        launch_arguments={
             'robot_ip': LaunchConfiguration('robot_ip'),
-            'robot_port': LaunchConfiguration('robot_port'),
-            'enable_optimization': LaunchConfiguration('enable_optimization'),
-            'stroke_source': 'topic',
-        }],
+            'ur_type': LaunchConfiguration('ur_type'),
+            'launch_rviz': LaunchConfiguration('launch_rviz'),
+            'use_sim_time': 'false',
+        }.items(),
+    )
+
+    # ── Scene setup (table + marker holder) — delayed to let move_group start ──
+    scene_setup = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='ur3_motion_planning',
+                executable='add_table',
+                name='scene_setup',
+                output='screen',
+            ),
+        ],
+    )
+
+    # ── Motion-planning node (topic mode — waits for perception strokes) ──
+    #    Delayed so MoveIt2 /compute_cartesian_path service is ready.
+    motion_node = TimerAction(
+        period=8.0,
+        actions=[
+            Node(
+                package='ur3_motion_planning',
+                executable='motion_planning_node',
+                name='ur3_drawing_node',
+                output='screen',
+                parameters=[{
+                    'robot_ip': LaunchConfiguration('robot_ip'),
+                    'robot_port': LaunchConfiguration('robot_port'),
+                    'enable_optimization': LaunchConfiguration('enable_optimization'),
+                    'stroke_source': 'topic',
+                }],
+            ),
+        ],
     )
 
     ld = LaunchDescription(declared_arguments)
+    ld.add_action(ur_moveit_launch)
     ld.add_action(image_loader)
     for n in perception_nodes:
         ld.add_action(n)
+    ld.add_action(scene_setup)
     ld.add_action(motion_node)
     return ld
