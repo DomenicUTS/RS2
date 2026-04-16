@@ -32,7 +32,8 @@ ROBOT_PORT = 30002             # Primary interface (URScript)
 
 # Robot draw plane (world coords in metres, z = table surface)
 # Pre-calibrated: top-left corner of canvas in robot base frame
-CANVAS_ORIGIN_ROBOT = np.array([0.240, -0.075, 0.010])   # (x, y, z) metres — much closer to base for safe reach
+# Rotated 60° CCW so the canvas is in front of the home position (not to the right)
+CANVAS_ORIGIN_ROBOT = np.array([0.185, 0.170, 0.010])    # (x, y, z) metres — rotated 60° left from original
 CANVAS_WIDTH_M      = 0.150    # 15 cm canvas (reduced from 20cm for safety)
 CANVAS_HEIGHT_M     = 0.120    # 12 cm canvas (reduced from 15cm)
 
@@ -42,10 +43,10 @@ CANVAS_PX_H = 300
 
 # ── Marker holder geometry ──
 # 3D-printed part holds the marker at 20° from the end-effector perpendicular.
-# The end effector stays 15 cm above the canvas; the tilted marker reaches down.
+# The end effector stays above the canvas; the tilted marker reaches down.
 MARKER_TILT_DEG = 20.0                          # degrees from perpendicular
 MARKER_TILT_RAD = math.radians(MARKER_TILT_DEG)
-EE_DRAW_HEIGHT  = 0.15                          # end-effector height above canvas (m)
+EE_DRAW_HEIGHT  = 0.11                          # end-effector height above canvas (m) — lowered 4 cm
 
 # Z heights (end effector, NOT marker tip)
 CANVAS_SURFACE_Z = CANVAS_ORIGIN_ROBOT[2]                      # table / canvas surface
@@ -53,8 +54,8 @@ Z_DRAW    = CANVAS_SURFACE_Z + EE_DRAW_HEIGHT                  # EE at 15 cm abo
 Z_TRAVEL  = CANVAS_SURFACE_Z + EE_DRAW_HEIGHT + 0.060          # pen-up (6 cm above draw height)
 
 # Safe home position (close to canvas, definitely reachable by UR3)
-# This is positioned above the center of the canvas
-HOME_POS = np.array([0.250, -0.175, 0.230])  # closer and safer reach envelope
+# This is positioned above the center of the canvas, rotated 60° left
+HOME_POS = np.array([0.277, 0.129, 0.230])   # rotated 60° CCW to match canvas position
 
 # Motion params (optimized for simulator speed)
 JOINT_ACCEL  = 0.97  # rad/s²  (higher mid acceleration)

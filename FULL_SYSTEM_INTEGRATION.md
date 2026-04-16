@@ -139,6 +139,7 @@ ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   launch_rviz:=true
 
 # Terminal 2 — Start the GUI
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 python3 ~/gui/selfie_drawing_gui_ros2.py
@@ -160,10 +161,11 @@ source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   image_source:=gui \
-  robot_ip:=192.168.0.196 \
+  robot_ip:=192.168.0.195 \
   launch_rviz:=true
 
 # Terminal 2 — Start the GUI
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 python3 ~/gui/selfie_drawing_gui_ros2.py
@@ -445,7 +447,7 @@ source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   image_source:=gui \
-  robot_ip:=192.168.0.196 \
+  robot_ip:=192.168.0.195 \
   launch_rviz:=true
 
 # Terminal 2 — GUI (same as simulator)

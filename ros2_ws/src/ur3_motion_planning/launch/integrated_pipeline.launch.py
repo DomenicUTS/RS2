@@ -21,7 +21,9 @@ Usage:
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import (
+    DeclareLaunchArgument, IncludeLaunchDescription, TimerAction, SetEnvironmentVariable,
+)
 from launch.conditions import LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
@@ -172,16 +174,16 @@ def generate_launch_description():
         parameters=[robot_description],
     )
 
-    # ── Joint State Publisher (provides /joint_states for TF + MoveIt2) ──
-    joint_state_publisher_node = Node(
-        package='joint_state_publisher',
-        executable='joint_state_publisher',
-        parameters=[robot_description],
-    )
+    # ── Joint State Publisher ── REMOVED ──
+    # The ur3_drawing_node now publishes /joint_states directly with the
+    # correct HOME_JOINTS configuration, eliminating the phantom robot
+    # that appeared when joint_state_publisher broadcast default (zero)
+    # positions.
 
-    # ── Scene setup (table + marker holder) — delayed to let move_group start ──
+    # ── Scene setup (table + marker holder) — delayed to let move_group fully load ──
+    # move_group takes ~20-25s to load all capabilities including ApplyPlanningScene
     scene_setup = TimerAction(
-        period=5.0,
+        period=25.0,
         actions=[
             Node(
                 package='ur3_motion_planning',
@@ -193,9 +195,10 @@ def generate_launch_description():
     )
 
     # ── Motion-planning node (topic mode — waits for perception strokes) ──
-    #    Delayed so MoveIt2 /compute_cartesian_path service is ready.
+    #    Started early (1s) so it publishes /joint_states for MoveIt2 and RViz.
+    #    Actual planning waits until strokes arrive via /drawing_strokes topic.
     motion_node = TimerAction(
-        period=8.0,
+        period=1.0,
         actions=[
             Node(
                 package='ur3_motion_planning',
@@ -212,9 +215,12 @@ def generate_launch_description():
         ],
     )
 
+    # ── Isolate DDS domain so other students' robots don't interfere ──
+    set_domain_id = SetEnvironmentVariable('ROS_DOMAIN_ID', '42')
+
     ld = LaunchDescription(declared_arguments)
+    ld.add_action(set_domain_id)
     ld.add_action(robot_state_publisher_node)
-    ld.add_action(joint_state_publisher_node)
     ld.add_action(ur_moveit_launch)
     ld.add_action(image_loader)
     for n in perception_nodes:

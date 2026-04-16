@@ -137,7 +137,7 @@ JOINT_NAMES = [
     "wrist_2_joint",
     "wrist_3_joint",
 ]
-HOME_JOINTS = [0.0, -1.57, 1.57, -1.57, -1.57, 0.0]
+HOME_JOINTS = [1.047, -1.57, 1.57, -1.57, -1.57, 0.0]  # shoulder_pan rotated 60° to face canvas
 
 
 class UR3DrawingNode(Node):
@@ -172,6 +172,7 @@ class UR3DrawingNode(Node):
         self._topic_strokes = None
         self._metrics = Metrics() if IMPORTS_OK else None
         self._pipeline_thread = None
+        self._current_joints = list(HOME_JOINTS)  # track planned joint state
 
         # ── Callback groups ──
         self._service_cb_group = ReentrantCallbackGroup()
@@ -183,6 +184,12 @@ class UR3DrawingNode(Node):
             String, "drawing_strokes", self._on_drawing_strokes, 10)
         self.gui_cmd_sub = self.create_subscription(
             String, "gui/command", self._on_gui_command, 10)
+
+        # ── Joint state publisher (replaces joint_state_publisher node) ──
+        # Publishes the current planned joint positions so MoveIt2 and RViz
+        # show a single, consistent robot model (eliminates phantom robot).
+        self.joint_state_pub = self.create_publisher(JointState, "joint_states", 10)
+        self._js_timer = self.create_timer(0.1, self._publish_joint_states)  # 10 Hz
 
         # ── MoveIt2 service client (on separate callback group) ──
         self.cartesian_path_client = self.create_client(
@@ -207,6 +214,16 @@ class UR3DrawingNode(Node):
             self._publish_status("WAITING_FOR_PERCEPTION")
 
     # ─────────────────── callbacks ───────────────────
+
+    def _publish_joint_states(self):
+        """Publish current planned joint positions on /joint_states at 10 Hz.
+        This keeps MoveIt2 and RViz synchronized with our planned state,
+        preventing the phantom robot issue."""
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = JOINT_NAMES
+        msg.position = [float(j) for j in self._current_joints]
+        self.joint_state_pub.publish(msg)
 
     def _file_startup_timer(self):
         """One-shot timer callback for file-based stroke source."""
@@ -477,9 +494,10 @@ class UR3DrawingNode(Node):
         Thin a MoveIt2 joint trajectory while preserving collision safety.
 
         For travel/lift: keep only the final point (single movej at Z_TRAVEL).
-        For drawing: keep ALL points where any joint moves more than max_joint_delta
-                     from the last kept point.  Always keeps first and last.
-                     This preserves MoveIt2's collision-free guarantee.
+        For drawing: keep ALL MoveIt2-planned points to preserve the exact
+                     collision-free Cartesian path.  Previously, aggressive
+                     thinning caused joint-space shortcuts that made the
+                     end-effector deviate (up/down oscillations).
         """
         n = len(traj_points)
         if n == 0:
@@ -491,18 +509,9 @@ class UR3DrawingNode(Node):
             # Travel/lift: single movej to endpoint (robot is high up, safe)
             return [list(traj_points[-1].positions)]
 
-        # Drawing: keep all points with significant joint movement.
-        # This maintains collision-free guarantee from MoveIt2 while
-        # removing near-duplicate waypoints.
-        kept = [list(traj_points[0].positions)]  # always keep first
-        for i in range(1, n - 1):
-            prev = kept[-1]
-            curr = list(traj_points[i].positions)
-            delta = max(abs(c - p) for c, p in zip(curr, prev))
-            if delta >= max_joint_delta:
-                kept.append(curr)
-        kept.append(list(traj_points[-1].positions))  # always keep last
-        return kept
+        # Drawing: keep ALL MoveIt2 points so the robot follows the exact
+        # collision-free Cartesian path without joint-space shortcuts.
+        return [list(pt.positions) for pt in traj_points]
 
     def _plan_and_build_urscript(self, strokes) -> str:
         """
@@ -536,6 +545,7 @@ class UR3DrawingNode(Node):
                 skipped += 1
                 continue
             current_joints = list(traj_t.points[-1].positions)
+            self._current_joints = list(current_joints)  # update for joint state publisher
 
             # Use MoveIt2's planned joints for travel (just final point)
             travel_joints = self._thin_trajectory(traj_t.points, is_draw=False)
@@ -558,8 +568,7 @@ class UR3DrawingNode(Node):
                     continue
 
             current_joints = list(traj_d.points[-1].positions)
-
-            # Use ALL MoveIt2 planned joints for drawing (collision-free)
+            self._current_joints = list(current_joints)  # update for joint state publisher
             draw_joints = self._thin_trajectory(traj_d.points, is_draw=True)
             for i, jts in enumerate(draw_joints):
                 label = "pen-down" if i == 0 else f"draw s{s_idx+1}"
@@ -572,6 +581,7 @@ class UR3DrawingNode(Node):
                 [self._make_pose(lift_pos)], current_joints)
             if traj_l is not None and traj_l.points:
                 current_joints = list(traj_l.points[-1].positions)
+                self._current_joints = list(current_joints)  # update for joint state publisher
                 lift_joints = self._thin_trajectory(traj_l.points, is_draw=False)
                 for jts in lift_joints:
                     all_segments.append((jts, True, f"pen-up s{s_idx+1}"))
@@ -590,10 +600,9 @@ class UR3DrawingNode(Node):
     def _build_urscript(self, segments) -> str:
         """Build a complete URScript program from MoveIt2-planned joint waypoints."""
         lines = []
-        lines.append("# UR3 Selfie Drawing Robot | MoveIt2 collision-free trajectory")
+        # NOTE: Script must start with 'def' — no leading comments.
+        # Some CB3 firmware silently rejects scripts with text before 'def'.
         lines.append("def draw_face():")
-        lines.append(f"  # Marker holder: {MARKER_TILT_DEG} deg tilt, "
-                     f"EE {EE_DRAW_HEIGHT*100:.0f} cm above canvas")
         lines.append(f"  set_tcp(p[{TCP_OFFSET[0]:.4f},{TCP_OFFSET[1]:.4f},"
                      f"{TCP_OFFSET[2]:.4f},{TCP_OFFSET[3]:.4f},"
                      f"{TCP_OFFSET[4]:.4f},{TCP_OFFSET[5]:.4f}])")
@@ -608,25 +617,19 @@ class UR3DrawingNode(Node):
             j_str = ",".join(f"{j:.4f}" for j in joints)
             if is_travel:
                 # Travel/lift: faster joint-space move, no blend
-                lines.append(f"  movej([{j_str}], a={JOINT_ACCEL}, v={JOINT_VEL})"
-                             f"  # {comment}")
+                lines.append(f"  movej([{j_str}], a={JOINT_ACCEL}, v={JOINT_VEL})")
             else:
                 # Drawing: use blend radius for smooth continuous motion
                 # except for the very last drawing point (blend=0 to stop precisely)
                 is_last_draw = (idx + 1 >= len(segments) or segments[idx + 1][1])
                 if is_last_draw:
-                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3)"
-                                 f"  # {comment}")
+                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3)")
                 else:
-                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3, r=0.002)"
-                                 f"  # {comment}")
+                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3, r=0.002)")
 
         lines.append("")
-        lines.append(f"  # Return home")
         lines.append(f"  movej([{home_str}], a={JOINT_ACCEL}, v={JOINT_VEL})")
         lines.append("end")
-        lines.append("")
-        lines.append("draw_face()")
         return "\n".join(lines)
 
     # ─────────────────── stage 5: execute ───────────────────
@@ -656,31 +659,38 @@ class UR3DrawingNode(Node):
             sock.sendall(encoded)
             self.get_logger().info(
                 f"[Execute] URScript sent ({len(encoded)} bytes). "
-                f"Robot should start executing now.")
+                f"Waiting for robot to start executing ...")
 
-            # Read any immediate response from the controller
-            try:
-                sock.settimeout(2.0)
-                resp = sock.recv(4096)
-                if resp:
-                    self.get_logger().info(
-                        f"[Execute] Robot response: {resp[:200]}")
-            except socket.timeout:
-                self.get_logger().info(
-                    "[Execute] No immediate response (normal for URScript)")
+            # Keep socket open and monitor robot state for up to 10 seconds
+            # to give the CB3 controller time to parse and start execution.
+            # Closing too early can cause the controller to abort on real hardware.
+            sock.settimeout(2.0)
+            started_waiting = time.time()
+            while time.time() - started_waiting < 10.0:
+                try:
+                    resp = sock.recv(4096)
+                    if resp:
+                        self.get_logger().info(
+                            f"[Execute] Robot state packet ({len(resp)} bytes)")
+                except socket.timeout:
+                    pass
+                # Check if enough time has passed for the controller to start
+                if time.time() - started_waiting >= 5.0:
+                    break
 
             sock.close()
             self.get_logger().info(
-                "[Execute] Done. If robot is not moving, check:\n"
-                "  1. URSim is running and robot is powered ON\n"
-                "  2. URSim is in 'Remote Control' mode (not 'Local')\n"
-                "  3. Robot is not in Protective Stop / Emergency Stop\n"
+                "[Execute] Done — socket closed after monitoring period.\n"
+                "  If robot is not moving, check:\n"
+                f"  1. Robot is powered ON and initialized\n"
+                f"  2. Robot is in 'Remote Control' mode (not 'Local')\n"
+                f"  3. Robot is not in Protective Stop / Emergency Stop\n"
                 f"  4. Review script: cat {save_path}")
             return True
         except ConnectionRefusedError:
             self.get_logger().error(
                 f"[Execute] CONNECTION REFUSED at {self.robot_ip}:{self.robot_port}. "
-                f"Is URSim running? Is the robot IP correct?")
+                f"Is the robot running? Is the robot IP correct?")
             return False
         except socket.timeout:
             self.get_logger().error(

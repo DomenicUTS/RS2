@@ -24,7 +24,7 @@ import math
 # ── Marker holder geometry (must match ur3_selfie_draw.py) ──
 MARKER_TILT_DEG = 20.0
 MARKER_TILT_RAD = math.radians(MARKER_TILT_DEG)
-EE_DRAW_HEIGHT  = 0.15  # m – end-effector height above canvas
+EE_DRAW_HEIGHT  = 0.11  # m – end-effector height above canvas (lowered 4 cm)
 
 
 class ScenePublisher(Node):
@@ -36,14 +36,19 @@ class ScenePublisher(Node):
         self.get_logger().info('/apply_planning_scene service available')
 
     # ── helpers ────────────────────────────────────────────────
-    def _apply(self, scene_msg: PlanningScene):
-        req = ApplyPlanningScene.Request()
-        req.scene = scene_msg
-        future = self.cli.call_async(req)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
-        if future.result() is not None and future.result().success:
-            return True
-        self.get_logger().error('ApplyPlanningScene call failed')
+    def _apply(self, scene_msg: PlanningScene, retries=3):
+        for attempt in range(retries):
+            req = ApplyPlanningScene.Request()
+            req.scene = scene_msg
+            future = self.cli.call_async(req)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=15.0)
+            if future.result() is not None and future.result().success:
+                return True
+            self.get_logger().warn(
+                f'ApplyPlanningScene attempt {attempt+1}/{retries} failed, retrying in 5s …')
+            import time
+            time.sleep(5.0)
+        self.get_logger().error('ApplyPlanningScene call failed after all retries')
         return False
 
     # ── Table ──────────────────────────────────────────────────

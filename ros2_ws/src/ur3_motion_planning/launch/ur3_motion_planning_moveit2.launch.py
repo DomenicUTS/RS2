@@ -6,7 +6,9 @@ then adds table + marker-holder collision objects.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import (
+    DeclareLaunchArgument, IncludeLaunchDescription, TimerAction, SetEnvironmentVariable,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution,
@@ -111,9 +113,9 @@ def generate_launch_description():
         }.items(),
     )
 
-    # ── Collision objects after move_group starts ──
+    # ── Collision objects after move_group fully loads ──
     scene_setup = TimerAction(
-        period=5.0,
+        period=25.0,
         actions=[
             Node(
                 package='ur3_motion_planning',
@@ -124,7 +126,11 @@ def generate_launch_description():
         ],
     )
     
+    # ── Isolate DDS domain so other students' robots don't interfere ──
+    set_domain_id = SetEnvironmentVariable('ROS_DOMAIN_ID', '42')
+
     ld = LaunchDescription(declared_arguments)
+    ld.add_action(set_domain_id)
     ld.add_action(robot_state_publisher_node)
     ld.add_action(joint_state_publisher_node)
     ld.add_action(ur_moveit_launch)
