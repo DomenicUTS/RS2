@@ -2,10 +2,10 @@
 """
 Integrated launch: Perception Pipeline → Motion Planning Pipeline
 
-Starts the selfie_perception nodes (face detection → edge extraction →
-stroke mapping → visualisation) **and** the ur3_motion_planning drawing
+Starts the selfie_perception nodes (background removal → edge detection →
+stroke extraction → visualisation) **and** the ur3_motion_planning drawing
 node in "topic" mode so it subscribes to /drawing_strokes published by
-the perception mapping_node.
+the perception_node.
 
 The GUI is NOT launched here — it runs separately as a plain Python script
 (~/gui/selfie_drawing_gui_ros2.py).  It publishes captured images on
@@ -83,34 +83,27 @@ def generate_launch_description():
         condition=LaunchConfigurationEquals('image_source', 'file'),
     )
 
-    # ── Perception processing nodes (always started) ──
-    perception_nodes = [
-        Node(
-            package='selfie_perception',
-            executable='face_detection_node',
-            name='face_detection_node',
-            output='screen',
-        ),
-        Node(
-            package='selfie_perception',
-            executable='image_processing_node',
-            name='image_processing_node',
-            output='screen',
-        ),
-        Node(
-            package='selfie_perception',
-            executable='mapping_node',
-            name='mapping_node',
-            output='screen',
-        ),
-        Node(
-            package='selfie_perception',
-            executable='visualization_node',
-            name='visualization_node',
-            output='screen',
-            parameters=[{'display': LaunchConfiguration('display_preview')}],
-        ),
-    ]
+    # ── Perception processing nodes ──
+    # perception_node: bg removal (rembg) → Canny edge detection (σ=3) → stroke extraction
+    perception_node = Node(
+        package='selfie_perception',
+        executable='perception_node',
+        name='perception_node',
+        output='screen',
+        parameters=[{
+            'output_dir': '~/perception/output/',
+            'canvas_px_w': 400,
+            'canvas_px_h': 300,
+            'gaussian_sigma': 2.5,
+            'canny_low': 18,
+            'canny_high': 60,
+            'simplification_epsilon': 2.0,
+            'min_contour_points': 5,
+            'min_stroke_length': 11,
+        }],
+    )
+    # Note: perception_node already publishes /drawing_strokes and /drawing_preview_image
+    # visualization_node is NOT needed here (only useful for standalone perception testing)
 
     # ── MoveIt2 (move_group + RViz, NO servo_node) ──
     ur_moveit_launch = IncludeLaunchDescription(
@@ -223,8 +216,8 @@ def generate_launch_description():
     ld.add_action(robot_state_publisher_node)
     ld.add_action(ur_moveit_launch)
     ld.add_action(image_loader)
-    for n in perception_nodes:
-        ld.add_action(n)
+    ld.add_action(perception_node)
+    # visualization_node removed (perception_node publishes preview directly)
     ld.add_action(scene_setup)
     ld.add_action(motion_node)
     return ld

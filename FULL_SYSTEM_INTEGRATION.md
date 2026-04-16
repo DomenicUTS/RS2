@@ -1,7 +1,7 @@
 # Full System Integration — GUI + Perception + Motion Planning
 
 **Project:** UR3 Selfie Drawing Robot — Team Picasso  
-**Date:** 9 April 2026  
+**Date:** 16 April 2026  
 **Contributors:** GUI student, Perception student, Domenic Kadioglu (Motion)
 
 ---
@@ -29,8 +29,13 @@ cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 If you add or modify entry points in `setup.py`, you may need to clean the build cache:
 ```bash
+# Motion planning:
 rm -rf ~/RS2/ros2_ws/build/ur3_motion_planning ~/RS2/ros2_ws/install/ur3_motion_planning
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
+
+# Perception:
+rm -rf ~/perception/build/selfie_perception ~/perception/install/selfie_perception
+cd ~/perception && colcon build --packages-select selfie_perception
 ```
 
 ---
@@ -59,12 +64,10 @@ Three independent subsystems work together to capture a selfie and draw it with 
 
 | Topic | Message Type | Publisher(s) | Subscriber(s) | Description |
 |-------|-------------|-------------|---------------|-------------|
-| `/raw_image` | `sensor_msgs/Image` | **GUI** node or **image_loader_node** | face_detection_node, mapping_node (reset), visualization_node (reset) | Raw camera frame (BGR8) |
-| `/aligned_face` | `sensor_msgs/Image` | face_detection_node | image_processing_node | Cropped 256×256 face |
-| `/processed_mask` | `sensor_msgs/Image` | image_processing_node | mapping_node | Edge-detected contour mask |
-| `/drawing_strokes` | `std_msgs/String` | mapping_node | **ur3_drawing_node**, **GUI** node, visualization_node | JSON stroke array `[[[x,y],…],…]` in 400×300 px |
-| `/drawing_preview_image` | `sensor_msgs/Image` | visualization_node | **GUI** node | Rendered preview of what robot will draw |
-| `/drawing_status` | `std_msgs/String` | **ur3_drawing_node** | mapping_node, **GUI** node | Pipeline state (WAITING, EXECUTING, COMPLETE, ERROR, …) |
+| `/raw_image` | `sensor_msgs/Image` | **GUI** node or **image_loader_node** | perception_node, visualization_node (reset) | Raw camera frame (BGR8) |
+| `/drawing_strokes` | `std_msgs/String` | perception_node | **ur3_drawing_node**, **GUI** node, visualization_node | JSON stroke array `[[[x,y],…],…]` in 400×300 px |
+| `/drawing_preview_image` | `sensor_msgs/Image` | perception_node, visualization_node | **GUI** node | Rendered preview of what robot will draw |
+| `/drawing_status` | `std_msgs/String` | **ur3_drawing_node** | **GUI** node | Pipeline state (WAITING, EXECUTING, COMPLETE, ERROR, …) |
 | `/trajectory_preview` | `geometry_msgs/PoseArray` | ur3_drawing_node | RViz | 3D waypoint visualisation |
 | `/gui/command` | `std_msgs/String` | **GUI** node | **ur3_drawing_node** | Commands: START, PAUSE, RESUME, STOP |
 
@@ -91,18 +94,15 @@ Three independent subsystems work together to capture a selfie and draw it with 
 | Direction | Topic | What |
 |-----------|-------|------|
 | **Subscribes** | `/raw_image` | Input photo (from GUI or image_loader_node) |
-| **Subscribes** | `/drawing_status` | Logs motion pipeline state |
-| **Publishes** | `/drawing_strokes` | JSON strokes after edge detection + mapping |
+| **Publishes** | `/drawing_strokes` | JSON strokes after bg removal + edge detection + stroke extraction |
 | **Publishes** | `/drawing_preview_image` | Rendered preview of strokes |
 | **File output** | `~/perception/output/perception_strokes.json` | Same strokes saved to disk |
 
 **Nodes:**
-- `image_loader_node` — Watches `~/perception/input/` for images (standalone testing)
-- `camera_node` — Live webcam at 10 FPS (alternative to image_loader)
-- `face_detection_node` — Haar cascade face crop → 256×256
-- `image_processing_node` — Elliptical mask + Canny edge detection
-- `mapping_node` — Contour extraction, Douglas-Peucker simplification, stroke ordering
-- `visualization_node` — Stroke preview rendering + file save
+- `image_loader_node` — Watches `~/perception/input/` for images (standalone testing, publishes up to 5 times)
+- `perception_node` — Full pipeline: background removal (rembg/u2net_human_seg) → Gaussian blur + Canny edge detection (σ=3) → contour extraction, Douglas-Peucker simplification, morphological closing, nearest-neighbour stroke ordering. Publishes strokes and preview.
+- `visualization_node` — Subscribes to `/drawing_strokes`, renders stroke preview, publishes to `/drawing_preview_image`, saves `drawing_preview.png`
+- `pipeline` — Standalone CLI tool (no ROS) for running the full pipeline on an image file
 
 ### Motion Planning (`~/RS2/`)
 
@@ -174,7 +174,7 @@ python3 ~/gui/selfie_drawing_gui_ros2.py
 **Workflow:**
 1. GUI shows live webcam preview
 2. Click "Capture" → sends image to perception
-3. Perception detects face, extracts edges, publishes strokes
+3. Perception processes: background removal (rembg) → Canny edge detection (σ=3) → stroke extraction → publishes strokes
 4. GUI shows preview of what will be drawn
 5. Click "Start Drawing" button
 6. Motion node receives strokes, plans collision-safe MoveIt2 trajectories, executes via URScript
@@ -197,7 +197,7 @@ ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   launch_rviz:=true
 ```
 
-The `image_loader_node` will automatically load and publish images, then perception processes → strokes published → motion node plans and executes.
+The `image_loader_node` will automatically load and publish images, then perception_node processes → strokes published → motion node plans and executes.
 
 ### Mode 3: Each Subsystem Standalone
 
@@ -209,10 +209,15 @@ python3 selfie_drawing_gui_starter.py
 
 **Perception only** (process an image, no robot):
 ```bash
+# Via ROS 2 launch (place image in ~/perception/input/ first):
 source ~/perception/install/setup.bash
+cd ~/perception && colcon build --packages-select selfie_perception
 ros2 launch selfie_perception perception_pipeline.launch.py
-# OR standalone test (no ROS at all):
-python3 ~/perception/src/selfie_perception/selfie_perception/test_perception.py
+
+# OR standalone (no ROS at all):
+python3 -m selfie_perception.pipeline ~/perception/input/your_image.png
+# OR auto-pick latest image:
+python3 -m selfie_perception.pipeline
 ```
 
 **Motion only (MoveIt2 planning from pre-made strokes):**
@@ -272,12 +277,14 @@ All three subsystems agree on this stroke format:
 
 | File | Change |
 |------|--------|
-| `image_loader_node.py` | Fixed default `image_dir` to `~/perception/input/` (was broken relative path) |
-| `mapping_node.py` | Fixed default `output_dir`. Added `/drawing_status` subscriber (feedback). Added `/raw_image` subscriber to reset `processed` flag for multi-capture. |
-| `visualization_node.py` | Fixed default `output_dir`. Added `drawing_preview_image` publisher (Image). Added `/raw_image` subscriber to reset `done` flag. Added `cv_bridge` import. |
-| `camera_node.py` | Unchanged |
-| `face_detection_node.py` | Unchanged |
-| `image_processing_node.py` | Unchanged |
+| `perception_node.py` | **NEW** — Single unified perception node. Subscribes to `/raw_image`, runs bg removal (rembg/u2net_human_seg) → Canny edge detection (σ=3) → stroke extraction (morphological closing + Douglas-Peucker simplification + NN reordering). Publishes `/drawing_strokes` and `/drawing_preview_image`. Replaces the old 3-node pipeline (face_detection + image_processing + mapping). |
+| `background_removal.py` | **NEW** — Background removal module using `rembg` library with u2net_human_seg model. |
+| `edge_detection.py` | **NEW** — Canny edge detection with configurable Gaussian pre-blur (σ=3 default). |
+| `stroke_extraction.py` | **NEW** — Contour extraction, Douglas-Peucker simplification, morphological closing, greedy NN stroke reordering. |
+| `pipeline.py` | **NEW** — Standalone CLI pipeline (no ROS). Runs all 3 stages and saves outputs to numbered run directories. |
+| `image_loader_node.py` | Watches `~/perception/input/` for images, publishes up to `max_publishes` times (default 5). |
+| `visualization_node.py` | Subscribes to `/drawing_strokes`, renders preview, publishes to `/drawing_preview_image`, saves to disk. Resets on new `/raw_image`. |
+| `perception_pipeline.launch.py` | Updated to launch `image_loader_node` → `perception_node` → `visualization_node`. |
 
 ### Motion Planning (`~/RS2/`)
 
@@ -285,7 +292,7 @@ All three subsystems agree on this stroke format:
 |------|--------|
 | `ur3_drawing_node.py` | **REWRITTEN** — Now uses MoveIt2 `/compute_cartesian_path` service for collision-aware trajectory planning. Calls GetCartesianPath for each stroke, then converts planned joint trajectories to URScript. |
 | `add_table_simple.py` | **REWRITTEN** — Publishes table AND marker-holder (160×180mm prism) as collision objects. Marker holder is **attached to tool0** so it moves with EE and MoveIt2 knows to avoid collisions. |
-| `integrated_pipeline.launch.py` | Includes `ur_moveit_config` launch. Adds delays and TimerActions to: (1) start move_group, (2) publish scene objects, (3) start drawing node. |
+| `integrated_pipeline.launch.py` | Includes `ur_moveit_config` launch. Adds delays and TimerActions to: (1) start move_group, (2) publish scene objects, (3) start drawing node. Launches `perception_node` + `visualization_node` from selfie_perception. |
 | `ur3_motion_planning_moveit2.launch.py` | Updated to include scene setup (table + marker holder auto-published). |
 | `setup.py` | Added `add_table` console script entry point. |
 | `setup.cfg` | **NEW** — Required for ROS 2 Python packages. Tells `colcon` to install entry point executables to `lib/ur3_motion_planning/` instead of `bin/` (needed for `ros2 run`). |
