@@ -24,7 +24,7 @@ import math
 # ── Marker holder geometry (must match ur3_selfie_draw.py) ──
 MARKER_TILT_DEG = 20.0
 MARKER_TILT_RAD = math.radians(MARKER_TILT_DEG)
-EE_DRAW_HEIGHT  = 0.11  # m – end-effector height above canvas (lowered 4 cm)
+EE_DRAW_HEIGHT  = 0.115  # m – end-effector height above canvas
 
 
 class ScenePublisher(Node):

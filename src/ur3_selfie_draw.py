@@ -46,7 +46,7 @@ CANVAS_PX_H = 300
 # The end effector stays above the canvas; the tilted marker reaches down.
 MARKER_TILT_DEG = 20.0                          # degrees from perpendicular
 MARKER_TILT_RAD = math.radians(MARKER_TILT_DEG)
-EE_DRAW_HEIGHT  = 0.11                          # end-effector height above canvas (m) — lowered 4 cm
+EE_DRAW_HEIGHT  = 0.115                         # end-effector height above canvas (m)
 
 # Z heights (end effector, NOT marker tip)
 CANVAS_SURFACE_Z = CANVAS_ORIGIN_ROBOT[2]                      # table / canvas surface
