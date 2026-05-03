@@ -1,8 +1,39 @@
 # Full System Integration — GUI + Perception + Motion Planning
 
-**Project:** UR3 Selfie Drawing Robot — Team Picasso  
-**Date:** 16 April 2026  
+**Project:** UR3 Selfie Drawing Robot — Team Picasso
+**Last updated:** 3 May 2026
 **Contributors:** GUI student, Perception student, Domenic Kadioglu (Motion)
+
+> See also: [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) for full
+> hardware/software bill of materials, install steps, and per-subsystem
+> reference. This document is the cross-system topic map and run-mode guide.
+
+---
+
+## ⚠️ Always set `ROS_DOMAIN_ID=42` (UTS lab)
+
+In the UTS lab every team's robot and laptop are on the same network.
+By default, ROS 2 nodes from different machines find each other via
+multicast and end up cross-talking — another team's perception node
+can publish strokes to **our** motion node, or our `/gui/command`
+START messages can fire someone else's robot. We've had drawings get
+corrupted by stray topics in past sprints; this is the fix.
+
+**Every terminal that runs `ros2`, `colcon`, or any of our Python nodes
+must first `export ROS_DOMAIN_ID=42`.** The `integrated_pipeline.launch.py`
+file pins the same domain internally via
+`SetEnvironmentVariable('ROS_DOMAIN_ID', '42')`, but external terminals
+(GUI, simulator, monitoring with `ros2 topic`) do not inherit that —
+you have to set it yourself.
+
+```bash
+export ROS_DOMAIN_ID=42      # do this in every terminal, before any ros2/colcon command
+echo $ROS_DOMAIN_ID          # verify (must print: 42)
+```
+
+If different terminals have different domain IDs, nodes will not see
+each other and the pipeline will silently hang (e.g. the GUI never
+shows the preview, or the motion node never receives `/drawing_strokes`).
 
 ---
 
@@ -126,12 +157,14 @@ Three independent subsystems work together to capture a selfie and draw it with 
 **Simulator (default, with MoveIt2 collision planning):**
 ```bash
 # Build both packages (required after any code changes)
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 cd ~/perception && colcon build --packages-select selfie_perception
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 # Terminal 1 — Start the backend pipeline (MoveIt2 + Perception + Motion)
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
@@ -145,18 +178,21 @@ source ~/RS2/ros2_ws/install/setup.bash
 python3 ~/gui/selfie_drawing_gui_ros2.py
 
 # Terminal 3 (optional) — Start the UR3 simulator
+export ROS_DOMAIN_ID=42
 ros2 run ur_client_library start_ursim.sh -m ur3
 ```
 
 **Real Robot (replace IP with your UR3 address):**
 ```bash
 # Build both packages (required after any code changes)
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 cd ~/perception && colcon build --packages-select selfie_perception
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 # Terminal 1 — Start the backend pipeline
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
@@ -178,18 +214,20 @@ python3 ~/gui/selfie_drawing_gui_ros2.py
 4. GUI shows preview of what will be drawn
 5. Click "Start Drawing" button
 6. Motion node receives strokes, plans collision-safe MoveIt2 trajectories, executes via URScript
-7. Robot draws the face at 20° angle
+7. Robot draws the face at 20° angle, **cycling through 4 markers** — wrist_3 rotates 90° between strokes so each stroke gets the next colour, producing a four-coloured artwork
 
 ### Mode 2: Perception + Motion with MoveIt2 (no GUI)
 
 ```bash
 # Build both packages (required after any code changes)
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 cd ~/perception && colcon build --packages-select selfie_perception
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 # Place an image in ~/perception/input/
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
@@ -210,6 +248,7 @@ python3 selfie_drawing_gui_starter.py
 **Perception only** (process an image, no robot):
 ```bash
 # Via ROS 2 launch (place image in ~/perception/input/ first):
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 cd ~/perception && colcon build --packages-select selfie_perception
 ros2 launch selfie_perception perception_pipeline.launch.py
@@ -227,12 +266,14 @@ source ~/RS2/ros2_ws/install/setup.bash
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 # Terminal 1 — Start MoveIt2 with scene setup
+export ROS_DOMAIN_ID=42
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
   robot_ip:=192.168.56.101 \
   launch_rviz:=true
 
 # Terminal 2 — Start the motion node in file mode:
+export ROS_DOMAIN_ID=42
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 run ur3_motion_planning motion_planning_node \
   --ros-args \
@@ -372,6 +413,39 @@ end
 
 This tells the robot: *"Treat this offset as the tool center for all movel/movej paths."* The robot's IK solver then adjusts joint angles so the actual marker tip reaches the commanded positions.
 
+### Multi-Marker (4-Colour) Drawing
+
+The 3D-printed end-effector holder carries **four markers** at 0°, 90°, 180°,
+and 270° around the wrist_3 axis, each tilted 20° outward (radially).
+Because the holder is rotationally symmetric, when wrist_3 rotates 90°
+the next marker tip lands at the same world position the previous one
+occupied — so the canvas calibration (`CANVAS_ORIGIN_ROBOT`) and the
+URScript `set_tcp()` value are unchanged between markers.
+
+**How it cycles** (in `ur3_drawing_node.py`):
+
+```
+For each stroke s_idx:
+    marker_idx = s_idx % 4              # 0, 1, 2, 3, 0, 1, 2, 3, …
+    quat = TOOL_QUAT ⊗ Rz(-90° × marker_idx)
+    plan travel + draw + lift waypoints with `quat` as orientation
+```
+
+MoveIt2 then naturally rotates wrist_3 by 90° during the pen-up travel
+between strokes (when the EE is safely above the canvas), swapping the
+active marker without any extra explicit rotation step.
+
+| Stroke index | Marker | wrist_3 offset (rel. to baseline) |
+|--------------|--------|------------------------------------|
+| 0, 4, 8, …   | 1      | 0°                                 |
+| 1, 5, 9, …   | 2      | -90°                               |
+| 2, 6, 10, …  | 3      | -180°                              |
+| 3, 7, 11, …  | 4      | -270° (= +90°)                     |
+
+If your physical holder loads markers in a different order, swap the
+colour cartridges in the holder rather than changing the code — the
+mapping above is the deterministic order of use.
+
 ### Drawing at Angle: Combining 20° Tilt + Cartesian Paths
 
 **Goal:** Draw on a canvas while the marker is tilted 20° from vertical.
@@ -420,12 +494,14 @@ This tells the robot: *"Treat this offset as the tool center for all movel/movej
 **Simulator:**
 ```bash
 # Build both packages (required after any code changes)
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 cd ~/perception && colcon build --packages-select selfie_perception
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 # Terminal 1 — Full integrated pipeline with MoveIt2 + Perception + Motion
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
@@ -433,23 +509,27 @@ ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   launch_rviz:=true
 
 # Terminal 2 — Start the GUI
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 python3 ~/gui/selfie_drawing_gui_ros2.py
 
 # Terminal 3 (optional) — Start the UR3 simulator
+export ROS_DOMAIN_ID=42
 ros2 run ur_client_library start_ursim.sh -m ur3
 ```
 
 **Real Robot:**
 ```bash
 # Build both packages (required after any code changes)
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 cd ~/perception && colcon build --packages-select selfie_perception
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 # Terminal 1
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
@@ -458,6 +538,7 @@ ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   launch_rviz:=true
 
 # Terminal 2 — GUI (same as simulator)
+export ROS_DOMAIN_ID=42
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 python3 ~/gui/selfie_drawing_gui_ros2.py
@@ -471,6 +552,7 @@ source ~/RS2/ros2_ws/install/setup.bash
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 # Launch
+export ROS_DOMAIN_ID=42
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
   robot_ip:=192.168.56.101 \
@@ -500,4 +582,5 @@ You can then:
 - [x] Real robot support (configurable IP)
 - [x] Perception-published strokes flow to motion node
 - [x] GUI status feedback from motion node
-- [ ] Full end-to-end test on real robot (pending team scheduling)
+- [x] **Four-marker rotation (wrist_3 swaps colour per stroke)**
+- [ ] Full end-to-end test on real robot with all 4 colours (pending team scheduling)

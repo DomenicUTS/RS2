@@ -126,6 +126,36 @@ if IMPORTS_OK:
 else:
     TOOL_QUAT = (0.984808, 0.0, -0.173648, 0.0)  # fallback
 
+# ── Multi-marker holder ──
+# Custom 3D-printed holder carries 4 markers at 0°, 90°, 180°, 270° around the
+# wrist_3 axis. Each marker is tilted 20° outward (radially). To cycle through
+# markers we rotate tool0 around its own Z-axis by -marker_idx * 90°.
+# The holder is rotationally symmetric, so each marker tip lands at the same
+# world position when its corresponding wrist_3 offset is applied — meaning
+# px_to_robot() and TCP_OFFSET stay valid for every marker.
+MARKER_COUNT = 4
+MARKER_STEP_RAD = -math.pi / 2.0  # -90° around tool Z per marker
+
+
+def _quat_mul(q1, q2):
+    """Hamilton product (x, y, z, w) * (x, y, z, w)."""
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    return (
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+    )
+
+
+def marker_tool_quat(marker_idx: int):
+    """Return TOOL_QUAT rotated about its own Z-axis to activate marker N."""
+    angle = MARKER_STEP_RAD * (marker_idx % MARKER_COUNT)
+    qz = (0.0, 0.0, math.sin(angle / 2.0), math.cos(angle / 2.0))
+    return _quat_mul(TOOL_QUAT, qz)
+
+
 # MoveIt2 planning group
 PLANNING_GROUP = "ur_manipulator"
 EE_LINK = "tool0"
@@ -528,14 +558,23 @@ class UR3DrawingNode(Node):
         for s_idx, stroke in enumerate(strokes):
             if not stroke:
                 continue
+
+            # Cycle through 4 markers — one colour per stroke. The tool0 is
+            # rotated about its own Z so the next physical marker lands at
+            # the canvas. wrist_3 changes by 90° between strokes (during
+            # pen-up travel) to swap colours.
+            marker_idx = s_idx % MARKER_COUNT
+            stroke_quat = marker_tool_quat(marker_idx)
+
             self.get_logger().info(
                 f"[Plan] Stroke {s_idx+1}/{total_strokes} "
-                f"({len(stroke)} pts) ...")
+                f"({len(stroke)} pts) | marker #{marker_idx+1}/{MARKER_COUNT}")
 
-            # ── Travel to above first point (pen-up) ──
+            # ── Travel to above first point (pen-up) — rotates wrist_3 to
+            #    swap markers while the EE is safely above the canvas ──
             travel_pos = px_to_robot(*stroke[0])
             travel_pos[2] = Z_TRAVEL
-            travel_wp = [self._make_pose(travel_pos)]
+            travel_wp = [self._make_pose(travel_pos, quat=stroke_quat)]
 
             traj_t, frac_t = self._call_cartesian_path(travel_wp, current_joints)
             if traj_t is None or frac_t < 0.5:
@@ -550,14 +589,15 @@ class UR3DrawingNode(Node):
             # Use MoveIt2's planned joints for travel (just final point)
             travel_joints = self._thin_trajectory(traj_t.points, is_draw=False)
             for jts in travel_joints:
-                all_segments.append((jts, True, f"travel s{s_idx+1}"))
+                all_segments.append(
+                    (jts, True, f"travel s{s_idx+1} marker{marker_idx+1}"))
 
             # ── Draw waypoints (pen-down + stroke points) ──
             draw_poses = []
             for px, py in stroke:
                 rp = px_to_robot(float(px), float(py))
                 rp[2] = Z_DRAW
-                draw_poses.append(self._make_pose(rp))
+                draw_poses.append(self._make_pose(rp, quat=stroke_quat))
 
             traj_d, frac_d = self._call_cartesian_path(draw_poses, current_joints)
             if traj_d is None or frac_d < 0.3:
@@ -578,7 +618,7 @@ class UR3DrawingNode(Node):
             lift_pos = px_to_robot(*stroke[-1])
             lift_pos[2] = Z_TRAVEL
             traj_l, frac_l = self._call_cartesian_path(
-                [self._make_pose(lift_pos)], current_joints)
+                [self._make_pose(lift_pos, quat=stroke_quat)], current_joints)
             if traj_l is not None and traj_l.points:
                 current_joints = list(traj_l.points[-1].positions)
                 self._current_joints = list(current_joints)  # update for joint state publisher

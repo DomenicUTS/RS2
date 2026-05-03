@@ -1,383 +1,135 @@
-# UR3 Motion Planning Node
+# `ur3_motion_planning` — ROS 2 Package
 
-ROS 2 node that orchestrates the complete drawing pipeline: load strokes → optimize → plan with collision avoidance → execute on UR3.
+Motion-planning node for the UR3 Selfie Drawing Robot (Team Picasso).
+Subscribes to perception strokes, plans collision-aware Cartesian paths
+with MoveIt2, cycles through 4 markers (one colour per stroke), and
+executes URScript on the UR3.
+
+For top-level setup and the integrated pipeline, see
+[`~/RS2/README.md`](../../../README.md) and
+[`~/RS2/FULL_SYSTEM_INTEGRATION.md`](../../../FULL_SYSTEM_INTEGRATION.md).
+
+---
+
+## ⚠️ `ROS_DOMAIN_ID=42` is mandatory in the UTS lab
+
+Every terminal that runs anything from this package must first do:
+
+```bash
+export ROS_DOMAIN_ID=42
+```
+
+The UTS lab shares one network across all teams. Without a unique domain,
+ROS 2 nodes from other teams pick up our topics (and vice versa) — strokes
+appear from nowhere, START commands fire someone else's robot, etc. The
+integrated launch file pins this internally, but external terminals (your
+own debugging, `ros2 topic`, the GUI, the simulator) do not inherit it.
+Set it manually, every time.
 
 ---
 
 ## Build
 
 ```bash
+export ROS_DOMAIN_ID=42                          # ← always first
+source /opt/ros/humble/setup.bash
 cd ~/RS2/ros2_ws
-colcon build
+colcon build --packages-select ur3_motion_planning
 source install/setup.bash
 ```
 
----
-
-## Usage
-
-**With MoveIt2 (recommended):**
+If you change `setup.py` entry points, clean first:
 ```bash
-ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py ur_type:=ur3
-```
-
-**Direct execution:**
-```bash
-ros2 run ur3_motion_planning motion_planning_node --ros-args \
-  -p robot_ip:=192.168.56.101 \
-  -p face:=face1
+rm -rf build/ur3_motion_planning install/ur3_motion_planning
+colcon build --packages-select ur3_motion_planning
 ```
 
 ---
 
-## Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `robot_ip` | 192.168.56.101 | UR3 simulator or real robot IP |
-| `robot_port` | 30002 | TCP port |
-| `face` | face1 | Which face to draw (face1/face2/face3) |
-| `enable_optimization` | true | Enable path optimization |
-
----
-
-## Pipeline
-
-1. **Load:** Read strokes from `{face}_strokes.json`
-2. **Optimize:** Nearest-Neighbor TSP + 2-Opt (25-30% travel savings)
-3. **Cartesian:** Convert pixels to robot world coordinates
-4. **Plan:** MoveIt2 generates collision-safe trajectory
-5. **Execute:** URScript sent directly to UR3 over TCP/IP
-
-See code comments for implementation details.
-
----
-
-## What's in `ur3_motion_planning/`
+## Launch Files
 
 | File | Purpose |
 |------|---------|
-| `ur3_drawing_node.py` | ROS 2 node (main orchestrator) |
-| `add_table_simple.py` | Publishes table collision object to MoveIt2 |
-
----
-
-## Common Issues
-
-**Build fails:** `source /opt/ros/humble/setup.bash && colcon clean workspace && colcon build`
-
-**Cannot connect to robot:** Check IP is correct and port 30002 is open: `ping <ip>`
-
-**No motion:** Ensure `add_table_simple.py` is running in another terminal (publishes MoveIt2 collision object)
-
-**Protective stops:** Reduce motion parameters to Conservative level in `src/ur3_selfie_draw.py`
-- Confirm UR3 is powered and in operation
-
-**Topic subscription not receiving data**
-- Verify publisher is running in separate terminal
-- Check topic name: `ros2 topic list`
-- Echo topic: `ros2 topic echo /stroke_paths`
-
-**Trajectory generation times out**
-- Check waypoint count isn't excessive (>3000 per stroke)
-- Verify 2-Opt max iterations: 50 (configurable in ur3_selfie_draw.py)
-- Reduce canvas size if needed
-
----
-
-## Performance Specifications
-
-**Trajectory Optimization:**
-- Optimization reduction: 30-41% travel distance
-- NN-Sort execution time: <1ms
-- 2-Opt refinement time: <100ms
-- Total pipeline time: 75-134ms (for typical test data)
-
-**Generated Script Sizes:**
-- Typical script: 40,000-100,000 bytes
-- Maximum script: 150,000 bytes (UR3 controller limit)
-
-**Network Performance:**
-- TCP transmission rate: ~15 MB/s over Ethernet
-- Typical transmission time: 50-200ms
-
----
-
-## Integration Points
-
-**Perception Subsystem Interface:**
-- Subscribes to `/stroke_paths` (geometry_msgs/PoseArray)
-- Expected message rate: 1-5 Hz
-- Expected waypoint density: 10-100+ points per stroke
-
-**GUI Subsystem Interface:**
-- Publishes `/planning_status` (std_msgs/String)
-- Status update rate: event-driven (per trajectory)
-- Expected subscriber rate: 0.1-1 Hz
-
-**UR Robot Driver Interface:**
-- Publishes `/urscript_program` for manual execution
-- Alternative: publishs `/joint_trajectory` for ur_robot_driver (when enabled)
-
----
-
-## References
-
-**Internal:**
-- Motion Planning Library: [ur3_selfie_draw.py](../../../src/ur3_selfie_draw.py)
-- Main Documentation: [README.md](../../../README.md)
-- Testing Guide: [TESTING_AND_UR3_GUIDE.md](../../../TESTING_AND_UR3_GUIDE.md)
-
-**External:**
-- ROS 2 Humble: https://docs.ros.org/en/humble/
-- UR Robot Documentation: https://www.universal-robots.com/articles/ur-articles/technical-specifications/
-- URScript Reference: https://www.universal-robots.com/download/?option=16580
-
-### Step 2: Start ur_robot_driver (Recommended)
-
-In **Terminal 1**, launch UR driver:
-```bash
-ros2 launch ur_robot_driver ur_control.launch.py \
-    ur_type:=ur3 \
-    robot_ip:=10.0.0.2 \
-    launch_rviz:=true
-```
-
-You should see RViz window with robot model.
-
-### Step 3: Launch Motion Planning Node
-
-In **Terminal 2**:
-```bash
-cd ~/RS2/ros2_ws
-source install/setup.bash
-
-# Option A: Using ur_robot_driver (recommended for real robot)
-ros2 launch ur3_motion_planning ur3_motion_planning.launch.py \
-    robot_ip:=10.0.0.2 \
-    use_ros_control:=true
-
-# Option B: Direct TCP (if ur_robot_driver not desired)
-ros2 launch ur3_motion_planning ur3_motion_planning.launch.py \
-    robot_ip:=10.0.0.2 \
-    use_ros_control:=false
-```
-
-### Step 4: Play "External Control" on UR3
-
-1. On UR3 Teach Pendant, navigate to **Program** tab
-2. Load or create program: **External Control**
-3. Click **Play** (or press **▶** on pendant)
-
-### Step 5: Send Stroke Paths
-
-Repeat Step 3 from Polyscope section (same ROS 2 topic publishing).
-
-The robot will now execute the drawing!
-
----
-
-## Understanding the Architecture
-
-### Topic Flow
-
-```
-Perception Node (Nithish)
-    ↓
-    publishes: /stroke_paths (geometry_msgs/PoseArray)
-    ↓
-Motion Planning Node (YOU)
-    • Subscribes to /stroke_paths
-    • Runs optimization pipeline
-    • Publishes: /urscript_program (URScript code)
-    ↓
-ur_robot_driver (ROS 2) OR Direct TCP
-    ↓
-UR3 Robot / Polyscope Simulator
-    ↓
-Physical Drawing
-```
-
-### QoS (Quality of Service)
-
-- **BEST_EFFORT**: Fast, low-latency communication
-- **KEEP_LAST**: Maintains recent message (don't spam)
-- Appropriate for real-time drawing use case
-
----
-
-## Configuration
-
-### Launch Arguments
-
-When launching, customize with:
+| `integrated_pipeline.launch.py` | Full backend: MoveIt2 + perception + motion. Use with the GUI. |
+| `ur3_motion_planning_moveit2.launch.py` | Motion-only: MoveIt2 + scene + `motion_planning_node`. For offline / file-based runs. |
 
 ```bash
-ros2 launch ur3_motion_planning ur3_motion_planning.launch.py \
-    robot_ip:=192.168.56.101 \              # Robot IP
-    robot_port:=30002 \                     # TCP port
-    use_ros_control:=false \                # TCP vs ur_robot_driver
-    optimization_enabled:=true              # Enable NN+2-Opt
-```
+# Integrated (with GUI in another terminal):
+export ROS_DOMAIN_ID=42                          # ← always first
+ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
+  image_source:=gui launch_rviz:=true robot_ip:=192.168.56.101
 
-### Runtime Parameters
-
-Modify behavior via ROS 2 `set_parameter`:
-
-```bash
-# Disable path optimization
-ros2 param set /ur3_motion_planning optimization_enabled false
-
-# Change robot IP
-ros2 param set /ur3_motion_planning robot_ip 10.0.0.2
+# Standalone (loads ~/RS2/outputs/strokes/face1_strokes.json):
+export ROS_DOMAIN_ID=42                          # ← always first
+ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
+  robot_ip:=192.168.56.101
 ```
 
 ---
 
-## Integration with Other Subsystems
+## Node Parameters (`motion_planning_node`)
 
-### Perception Integration (Nithish)
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `robot_ip` | `192.168.56.101` | UR3 (real or simulator) IP |
+| `robot_port` | `30002` | URScript primary interface |
+| `stroke_source` | `file` | `file` or `topic` |
+| `face` | `face1` | Local stroke file (when `stroke_source=file`) |
+| `enable_optimization` | `true` | Toggle NN + 2-Opt |
+| `max_step` | `0.005` | MoveIt2 Cartesian interpolation step (m) |
+| `jump_threshold` | `5.0` | MoveIt2 joint-space jump filter |
+| `planning_timeout` | `30.0` | Per-stroke planning timeout (s) |
 
-Your perception node should publish `geometry_msgs/PoseArray`:
+---
 
-```python
-from geometry_msgs.msg import PoseArray, Pose, Point
+## Files
 
-# In your perception node:
-msg = PoseArray()
-msg.header.frame_id = 'canvas'
+| File | Purpose |
+|------|---------|
+| `ur3_motion_planning/ur3_drawing_node.py` | Main ROS 2 node — load → optimise → MoveIt2 plan → URScript execute |
+| `ur3_motion_planning/add_table_simple.py` | Publishes table + marker holder collision objects via `/apply_planning_scene` |
+| `launch/integrated_pipeline.launch.py` | Backend launch (MoveIt2 + perception + motion + scene) |
+| `launch/ur3_motion_planning_moveit2.launch.py` | Motion-only launch |
+| `setup.py` / `setup.cfg` / `package.xml` | ROS 2 package metadata |
 
-for stroke in strokes:
-    for x, y in stroke:
-        pose = Pose()
-        pose.position = Point(x=x, y=y, z=0.0)
-        msg.poses.append(pose)
+---
 
-publisher.publish(msg)  # Publishes to /stroke_paths
-```
+## Multi-Marker Drawing
 
-### GUI Integration (Mateusz)
+The end-effector holder carries 4 markers spaced 90° around the wrist_3 axis,
+each tilted 20° outward. Per stroke, the node selects the next marker
+(`marker_idx = stroke_index % 4`) and rotates the planned tool orientation
+about its own Z by `-marker_idx * 90°`. MoveIt2 then naturally rotates
+wrist_3 by 90° during the pen-up travel between strokes, swapping the
+active marker. Because the holder is rotationally symmetric, every marker
+tip lands at the same world position — `px_to_robot()` and `set_tcp()` do
+not change between markers.
 
-Your GUI node should:
+See [`ur3_drawing_node.py`](ur3_motion_planning/ur3_drawing_node.py) —
+look for `marker_tool_quat()` and the per-stroke loop in
+`_plan_and_build_urscript()`.
 
-1. **Subscribe** to `/planning_status` to show feedback:
-```python
-node.create_subscription(String, '/planning_status', callback, 10)
-# Shows: "Planning complete (0.085s) - Ready to execute"
-```
+---
 
-2. **Subscribe** to `/urscript_program` to display generated code (optional):
-```python
-node.create_subscription(String, '/urscript_program', callback, 10)
-```
+## ROS 2 Topics
 
-3. **Publish** to `/motion_params` to control planning:
-```python
-# Example: Disable optimization for faster preview
-msg = String()
-msg.data = json.dumps({"optimization": False})
-publisher.publish(msg)
-```
+| Direction | Topic | Type | Used by |
+|-----------|-------|------|---------|
+| Subscribe | `/drawing_strokes` | `std_msgs/String` | Perception → motion |
+| Subscribe | `/gui/command` | `std_msgs/String` | GUI → motion (START/STOP/…) |
+| Publish | `/drawing_status` | `std_msgs/String` | Motion → GUI |
+| Publish | `/trajectory_preview` | `geometry_msgs/PoseArray` | RViz |
+| Publish | `/joint_states` | `sensor_msgs/JointState` | MoveIt2 / RViz |
 
 ---
 
 ## Troubleshooting
 
-### "Connection failed: 192.168.56.101:30002"
-- Ensure Polyscope simulator is running: `ros2 run ur_client_library start_ursim.sh -m ur3`
-- Check if Docker is running: `docker ps`
-- Try manually: `ping 192.168.56.101`
-
-### "ModuleNotFoundError: ur3_selfie_draw"
-- Ensure source paths are correct in motion_planning_node.py
-- Check `sys.path.insert(0, ...)` points to correct location
-
-### "ROS 2 package not found"
-- Run `colcon build` in workspace
-- Run `source install/setup.bash`
-- Verify: `ros2 pkg list | grep ur3_motion_planning`
-
-### Real Robot: "IK solution not found"
-- Check canvas origin calibration
-- Increase workspace margins in ur3_selfie_draw.py
-- Check joint limits: `rostopic echo /joint_states`
-
----
-
-## Command Reference
-
-**Build package:**
-```bash
-cd ~/RS2/ros2_ws && colcon build
-```
-
-**Start Polyscope simulator:**
-```bash
-ros2 run ur_client_library start_ursim.sh -m ur3
-```
-
-**Launch motion planning node:**
-```bash
-ros2 launch ur3_motion_planning ur3_motion_planning.launch.py robot_ip:=192.168.56.101
-```
-
-**View node logs:**
-```bash
-ros2 run rqt_console rqt_console  # GUI log viewer
-# or:
-ros2 topic echo /planning_status   # Watch status messages
-```
-
-**Monitor ROS graph:**
-```bash
-ros2 run rqt_graph rqt_graph      # Visualize node/topic connections
-```
-
-**Check active nodes:**
-```bash
-ros2 node list  # Shows all running nodes
-ros2 topic list # Shows all active topics
-```
-
----
-
-## Files Reference
-
-- `motion_planning_node.py` — Main ROS 2 node (495 lines)
-- `ur3_motion_planning.launch.py` — Launch configuration
-- `package.xml` — ROS 2 package metadata
-- `setup.py` — Python package setup
-
----
-
-## Performance Metrics
-
-Tested with face1.json (13 strokes, 1294 waypoints):
-
-| Stage | Time |
-|-------|------|
-| Scaling detection | <1ms |
-| NN optimization | 0.8-1.3ms |
-| 2-Opt refinement | 58-118ms |
-| URScript generation | 9-15ms |
-| **Total pipeline** | **75-134ms** |
-| Polyscope execution | ~120 seconds |
-| Travel reduction | 41.0% |
-
-**Total system time:** ~2 minutes (well under 3-minute requirement)
-
----
-
-## For Sprint 2 Presentation
-
-This ROS 2 integration demonstrates:
-- ✅ Understanding of system-level architecture
-- ✅ Integration with other subsystems (Perception, GUI)
-- ✅ Proper use of ROS 2 topics/pub-sub pattern
-- ✅ Backward compatibility with existing TCP code
-- ✅ Flexibility: works with both Polyscope and real robot
-- ✅ Professional software engineering practices
-
-Mention in presentation:
-> "We converted the motion planning subsystem to a ROS 2 node to integrate with Perception and GUI subsystems via publish-subscribe architecture. This allows modular, decoupled subsystem communication."
-
+| Symptom | Likely cause / fix |
+|---------|--------------------|
+| Topics from / to another team appear (or our `START` triggers their robot) | `ROS_DOMAIN_ID` mismatch. Every terminal must `export ROS_DOMAIN_ID=42` before any `ros2`/`colcon`/`python3` call. Verify with `echo $ROS_DOMAIN_ID`. |
+| `move_group not available` | MoveIt2 still loading. Wait ≥ 25 s after launch, or use the built-in `TimerAction` delays. |
+| `/compute_cartesian_path` timeout | Stroke too long — reduce points; or `jump_threshold` too tight |
+| `Cartesian plan fraction < 0.5` for travel | Travel pose unreachable; check `CANVAS_ORIGIN_ROBOT` calibration |
+| Robot draws nothing on real UR3 | Pendant must be in **Remote Control** mode; check protective stop |
+| Phantom robot in RViz | The drawing node publishes `/joint_states` itself — ensure no other `joint_state_publisher` is running |
