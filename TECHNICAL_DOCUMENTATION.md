@@ -247,8 +247,16 @@ Wait ~30 s for the Docker container to come up. Visit
 3. Perception runs (background removal → Canny → strokes); takes 2–4 s on CPU.
 4. GUI receives the stroke preview from `/drawing_preview_image` and shows the line drawing.
 5. Pick a colour from the **Colour** dropdown in the GUI (red / blue / green / black).
-6. Click **Start Drawing** → the GUI publishes the colour on `/gui/marker_colour` and then `START` on `/gui/command`. The motion node rotates the wrist to the matching slot once at the start, then plans + executes every stroke in that single colour.
+6. Click **Start Drawing** → the GUI publishes the colour on `/gui/marker_colour` (for status consumers) and `START:<colour>` on `/gui/command` (the authoritative trigger). The motion node parses the colour out of the START command, rotates wrist_3 to the matching slot at the very start of the URScript, then plans + executes every stroke in that single colour.
 7. GUI status updates from `WAITING_FOR_PERCEPTION` → `OPTIMIZING_PATH` → `PLANNING_WITH_MOVEIT2` → `EXECUTING` → `COMPLETE`.
+
+> **Note — no auto-start.** The motion node intentionally does *not*
+> start drawing the moment perception strokes arrive on
+> `/drawing_strokes`. Strokes are cached and the pipeline only fires
+> when the user clicks Start Drawing (which sends `START:<colour>`).
+> This makes the colour selection authoritative — the previous
+> auto-start behaviour caused every drawing to come out in the default
+> colour because the pipeline would fire before the GUI Start click.
 
 ---
 
@@ -280,9 +288,18 @@ Wait ~30 s for the Docker container to come up. Visit
 | Publish | `/gui/command` | `std_msgs/String` | ur3_drawing_node |
 | Publish | `/gui/marker_colour` | `std_msgs/String` | ur3_drawing_node |
 
-Commands published on `/gui/command`: `START`, `PAUSE`, `RESUME`, `STOP`.
+Commands published on `/gui/command`: **`START:<colour>`** (e.g.
+`START:blue`), `PAUSE`, `RESUME`, `STOP`. The motion node parses the
+`<colour>` suffix out of the start command — this is the authoritative
+source of the marker selection.
+
 Values published on `/gui/marker_colour` (lowercase): `red`, `blue`,
-`green`, `black`. The colour is sent once, immediately before `START`.
+`green`, `black`. The GUI sends this in parallel with the `START:<colour>`
+command for any consumer that wants the raw colour value without
+parsing the start command (status displays, logging, etc.). The motion
+node's drawing pipeline does **not** rely on this topic — it uses the
+suffix in `START:<colour>` to avoid a callback ordering race in the
+multi-threaded executor.
 
 **How to run independently:**
 ```bash
@@ -389,25 +406,33 @@ and execute on the UR3 via URScript.
 **Pipeline:**
 
 ```
-Strokes JSON (from /drawing_strokes or face*.json)
-Colour     (from /gui/marker_colour, default 'black')
+Strokes JSON (from /drawing_strokes; cached, NOT auto-started)
+Colour     (parsed from "START:<colour>" on /gui/command)
+   │
+   ▼  GUI clicks "Start Drawing" → publishes START:<colour>
+   ▼  _on_gui_command parses colour, sets _selected_colour, spawns thread
    │
    ▼  Scale to 95 % of canvas
    ▼  Nearest-Neighbour TSP + 2-Opt (~30 % travel saved)
 Optimised stroke list
    │
-   ▼  marker_idx = COLOUR_TO_MARKER[colour]
-   ▼  quat       = TOOL_QUAT ⊗ Rz(-90° × marker_idx)   (set ONCE)
+   ▼  marker_idx     = COLOUR_TO_MARKER[colour]
+   ▼  wrist_3_offset = marker_idx × -90°
+   ▼  PLAN every stroke with TOOL_QUAT (marker 1's orientation)
+   │  (deterministic — same plan regardless of colour)
    │
    ▼  For each stroke:
    │     For travel + draw + lift:
    │        /compute_cartesian_path service (MoveIt2)  ←  COLLISION-AWARE
-   │        (every stroke uses the same quat — single colour)
-Joint trajectories
+Joint trajectories (planned for marker 1)
+   │
+   ▼  POST-PROCESS: add wrist_3_offset to every waypoint's 6th joint
+   ▼  PREPEND a movej rotating only wrist_3 from HOME → HOME+offset
+   │  (visible "swap to colour" before any horizontal motion)
    │
    ▼  Convert to movej commands → URScript program
    ▼  TCP socket → UR3 (port 30002)
-Robot draws (single colour selected by user)
+Robot draws (single colour, wrist physically rotated to that slot)
 ```
 
 **Nodes:**
@@ -421,9 +446,9 @@ Robot draws (single colour selected by user)
 
 | Topic | Type | Notes |
 |-------|------|-------|
-| `/drawing_strokes` | `std_msgs/String` (JSON) | When `stroke_source=topic` |
-| `/gui/command` | `std_msgs/String` | START/PAUSE/RESUME/STOP |
-| `/gui/marker_colour` | `std_msgs/String` | `red` / `blue` / `green` / `black` (defaults to `black`) |
+| `/drawing_strokes` | `std_msgs/String` (JSON) | When `stroke_source=topic`. **Cached, does not auto-start the pipeline** — the user must click Start Drawing. |
+| `/gui/command` | `std_msgs/String` | `START:<colour>` (the trigger), `PAUSE`, `RESUME`, `STOP` |
+| `/gui/marker_colour` | `std_msgs/String` | `red` / `blue` / `green` / `black`. Supplementary to `START:<colour>` (kept for status consumers). Defaults to `black` if neither this nor a `START:<colour>` arrives. |
 
 **Publishes:**
 
@@ -452,14 +477,31 @@ ros2 run ur3_motion_planning motion_planning_node --ros-args \
 
 **Single-marker drawing (user-selected colour).** The 3D-printed holder
 carries four markers at 0°, 90°, 180°, 270° around the wrist axis. The
-GUI publishes the chosen colour on `/gui/marker_colour`; the motion
-node looks the colour up in `COLOUR_TO_MARKER` to get a slot index,
-rotates the target tool orientation by `-marker_idx × 90°` around the
-tool's own Z-axis, and uses that orientation for **every** stroke.
-Because the holder is rotationally symmetric, every marker tip lands
-at the same world position when its slot is active — `CANVAS_ORIGIN_ROBOT`,
-`px_to_robot()`, and the URScript `set_tcp()` value are unchanged
-between colours.
+GUI sends `START:<colour>` on `/gui/command`; the motion node parses
+the colour out of the start command, looks it up in `COLOUR_TO_MARKER`
+to get a slot index, and uses that for the entire drawing.
+
+Implementation: the trajectory is planned with marker 1's orientation
+(`TOOL_QUAT`) for every stroke — making the plan deterministic and
+independent of the chosen colour — and the wrist_3 offset for the
+chosen marker (`marker_idx × -90°`, with `±2π` wrap) is applied as a
+**post-processing step** that adds the offset to the 6th joint of
+every output waypoint. Because the holder is rotationally symmetric,
+that single-axis rotation physically swings the chosen marker into
+the position marker 1 was tracing — `CANVAS_ORIGIN_ROBOT`,
+`px_to_robot()`, and the URScript `set_tcp()` value all stay the same.
+
+A separate "rotate-only" `movej` is prepended to the URScript so the
+wrist visibly swaps to the chosen marker before any horizontal motion
+toward the canvas.
+
+Why post-process the wrist rather than ask MoveIt2 for the rotated
+orientation directly: with 6 DOF the same end-effector orientation is
+reachable through several IK branches, and MoveIt2 was repeatedly
+"absorbing" the requested 90° tool-Z rotation into wrist_1 / wrist_2 /
+a wrist-flip, leaving wrist_3 essentially unchanged regardless of
+colour. The post-processing approach sidesteps the IK ambiguity
+entirely.
 
 Default mapping (edit `COLOUR_TO_MARKER` in `ur3_drawing_node.py` to
 match your physical loading order):
@@ -582,7 +624,8 @@ The collision-object dimensions are also defined in
 | Robot makes a protective stop on first move | Reduce motion params to **Conservative** (see §7). Verify `CANVAS_ORIGIN_ROBOT` is reachable. |
 | Strokes are drawn off the canvas | Recalibrate `CANVAS_ORIGIN_ROBOT` (see §7). |
 | Robot drew with the wrong colour | The mapping `colour name → holder slot` is in `COLOUR_TO_MARKER` in `ur3_drawing_node.py`. Either re-load the markers in the slot order matching the dict, or edit the dict to match your physical loading. |
-| Robot drew in the default (black) instead of the colour I picked | The GUI publishes the colour just before sending START. If the motion node started after the GUI published, the latched message could be missed. Click Start again, or restart the GUI after the motion node is up. |
+| Robot drew in the default colour regardless of GUI selection | Watch the motion-node log when you click Start. You should see four lines in order: `[GUI] >>> Received raw command: 'START:<colour>'`, `[GUI] Parsed command='START' payload='<colour>'`, `[GUI] ✓ Colour set to '<colour>'`, then `[Plan] >>> Pipeline reading colour: '<colour>'`. If any line is missing or shows the wrong colour, the chain is broken at that step. (Common cause: `ROS_DOMAIN_ID` mismatch between the GUI terminal and the motion-node terminal — see §5.) |
+| Pipeline never starts after Process | The motion node intentionally does **not** auto-start when perception strokes arrive. Click **Start Drawing** in the GUI; strokes are cached and used as soon as you press it. |
 | GUI doesn't see the perception preview | Confirm `ROS_DOMAIN_ID=42` is set in the GUI terminal *and* the launch file does `SetEnvironmentVariable('ROS_DOMAIN_ID', '42')`. Both must match. |
 | GUI camera shows "Disconnected" | Camera index conflict; close other apps using the webcam, or change `CameraHandler(camera_index=1)`. |
 | `rembg` slow on first run | Model download (~170 MB). Subsequent runs are fast (~2–4 s on CPU). |

@@ -97,15 +97,40 @@ ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
 ## Colour Selection (Single-Marker Drawing)
 
 The end-effector holder carries 4 markers spaced 90° around the wrist_3
-axis, each tilted 20° outward. The GUI publishes the chosen colour
-(`red` / `blue` / `green` / `black`) on `/gui/marker_colour`. The
-motion node maps the colour to a slot index via `COLOUR_TO_MARKER`,
-rotates the planned tool orientation about its own Z by
-`-marker_idx * 90°`, and uses that orientation for the entire drawing.
+axis, each tilted 20° outward. The GUI sends `START:<colour>` on
+`/gui/command` (e.g. `START:blue`); the motion node parses the colour
+out of the start command, looks it up in `COLOUR_TO_MARKER` to get a
+slot index, and uses that one marker for the whole drawing.
+
+**How the wrist is rotated to the chosen marker:**
+
+1. The trajectory is planned for **every** stroke with marker 1's
+   orientation (`TOOL_QUAT`). This makes the plan deterministic — same
+   tool0 path regardless of colour.
+2. After all planning is done, the 6th joint (`wrist_3`) of every
+   output waypoint is shifted by `marker_idx * -90°` (with `±2π` wrap).
+3. A "rotate-only" `movej` is prepended to the URScript so the wrist
+   visibly swaps to the chosen marker right after HOME, before any
+   horizontal motion toward the canvas.
+
+Why post-process rather than ask MoveIt2 for the rotated orientation
+directly: on a 6-DOF UR3 the same end-effector orientation is reachable
+through multiple IK branches, and `/compute_cartesian_path` was free
+to "absorb" the requested 90° tool-Z rotation into wrist_1 / wrist_2 /
+a wrist-flip — leaving wrist_3 unchanged regardless of colour. The
+post-processing offset on wrist_3 sidesteps the IK ambiguity entirely.
+Because the holder is rotationally symmetric, the constant offset on
+wrist_3 swings the chosen marker into the position marker 1 was
+tracing without changing the marker tip's world coordinates.
+
+The motion node also intentionally does **not** auto-start drawing
+when perception strokes arrive on `/drawing_strokes` — it caches them
+and waits for the GUI's `START:<colour>`. (Auto-start was the previous
+behaviour and caused every drawing to come out in the default colour.)
 
 See [`ur3_drawing_node.py`](ur3_motion_planning/ur3_drawing_node.py) —
-look for `COLOUR_TO_MARKER`, `marker_tool_quat()`, and
-`_on_gui_colour()`.
+look for `COLOUR_TO_MARKER`, `marker_tool_quat()`, `_on_gui_command()`,
+and the post-processing block at the end of `_plan_and_build_urscript()`.
 
 To change the colour-to-slot mapping (e.g. you loaded the markers in a
 different order), edit `COLOUR_TO_MARKER` directly:
@@ -119,15 +144,26 @@ COLOUR_TO_MARKER = {
 }
 ```
 
+**Verifying the data flow.** When you click Start Drawing in the GUI,
+the motion node should print these four log lines in order. If any is
+missing or shows the wrong colour, that's where the chain is broken.
+
+```
+[GUI] >>> Received raw command: 'START:blue'
+[GUI] Parsed command='START' payload='blue'
+[GUI] ✓ Colour set to 'blue' (marker slot 2/4)
+[Plan] >>> Pipeline reading colour: 'blue' (marker_idx=1, wrist_3_offset=-90.0°)
+```
+
 ---
 
 ## ROS 2 Topics
 
 | Direction | Topic | Type | Used by |
 |-----------|-------|------|---------|
-| Subscribe | `/drawing_strokes` | `std_msgs/String` | Perception → motion |
-| Subscribe | `/gui/command` | `std_msgs/String` | GUI → motion (START/STOP/…) |
-| Subscribe | `/gui/marker_colour` | `std_msgs/String` | GUI → motion (`red`/`blue`/`green`/`black`) |
+| Subscribe | `/drawing_strokes` | `std_msgs/String` | Perception → motion (cached, does **not** auto-start the pipeline) |
+| Subscribe | `/gui/command` | `std_msgs/String` | GUI → motion. `START:<colour>` (the trigger), `PAUSE`, `RESUME`, `STOP` |
+| Subscribe | `/gui/marker_colour` | `std_msgs/String` | GUI → motion (`red`/`blue`/`green`/`black`). Supplementary — the authoritative colour comes from `START:<colour>`. |
 | Publish | `/drawing_status` | `std_msgs/String` | Motion → GUI |
 | Publish | `/trajectory_preview` | `geometry_msgs/PoseArray` | RViz |
 | Publish | `/joint_states` | `sensor_msgs/JointState` | MoveIt2 / RViz |
@@ -139,6 +175,8 @@ COLOUR_TO_MARKER = {
 | Symptom | Likely cause / fix |
 |---------|--------------------|
 | Topics from / to another team appear (or our `START` triggers their robot) | `ROS_DOMAIN_ID` mismatch. Every terminal must `export ROS_DOMAIN_ID=42` before any `ros2`/`colcon`/`python3` call. Verify with `echo $ROS_DOMAIN_ID`. |
+| Drawing always uses the default marker regardless of GUI selection | Watch the motion-node log when you click Start. The chain is: `[GUI] >>> Received raw command: 'START:<colour>'` → `[GUI] Parsed command='START' payload='<colour>'` → `[GUI] ✓ Colour set to '<colour>'` → `[Plan] >>> Pipeline reading colour: '<colour>'`. If the first line never appears, the GUI message isn't reaching the node (check `ROS_DOMAIN_ID`). If a later line shows the wrong colour, the bug is in that step. |
+| Pipeline never starts after Process | Expected — auto-start was removed deliberately. Click **Start Drawing** in the GUI to trigger drawing. |
 | `move_group not available` | MoveIt2 still loading. Wait ≥ 25 s after launch, or use the built-in `TimerAction` delays. |
 | `/compute_cartesian_path` timeout | Stroke too long — reduce points; or `jump_threshold` too tight |
 | `Cartesian plan fraction < 0.5` for travel | Travel pose unreachable; check `CANVAS_ORIGIN_ROBOT` calibration |

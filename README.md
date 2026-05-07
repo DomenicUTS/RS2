@@ -25,9 +25,10 @@ For cross-subsystem topic flow and run modes, see
    (~25–30% pen-up travel saved).
 3. **Plans with MoveIt2** — `/compute_cartesian_path` with table + marker
    holder collision objects.
-4. **Single colour per drawing** — Subscribes to `/gui/marker_colour`
-   and rotates wrist_3 to the slot matching the chosen colour. All
-   strokes use that one marker (red / blue / green / black).
+4. **Single colour per drawing** — The GUI sends the chosen colour as
+   part of the START command (`START:<colour>` on `/gui/command`). The
+   motion node rotates wrist_3 to the slot matching that colour and
+   draws every stroke with that one marker (red / blue / green / black).
 5. **Executes on the UR3** — Generates URScript and ships it over TCP
    (port 30002) to the real robot or Polyscope simulator.
 
@@ -120,9 +121,9 @@ RS2/
 
 | Direction | Topic | Type | Notes |
 |-----------|-------|------|-------|
-| Subscribe | `/drawing_strokes` | `std_msgs/String` | JSON strokes from perception |
-| Subscribe | `/gui/command` | `std_msgs/String` | START / PAUSE / RESUME / STOP |
-| Subscribe | `/gui/marker_colour` | `std_msgs/String` | `red` / `blue` / `green` / `black` (defaults to `black` if not received before START) |
+| Subscribe | `/drawing_strokes` | `std_msgs/String` | JSON strokes from perception (cached; does **not** auto-start the pipeline) |
+| Subscribe | `/gui/command` | `std_msgs/String` | `START:<colour>` (e.g. `START:blue`), `PAUSE`, `RESUME`, `STOP`. The colour suffix is the trigger for the entire drawing. |
+| Subscribe | `/gui/marker_colour` | `std_msgs/String` | Supplementary — also published by the GUI; useful for debug / status consumers. The motion node prefers the colour parsed from `START:<colour>`. |
 | Publish | `/drawing_status` | `std_msgs/String` | Pipeline state (LOADING, EXECUTING, COMPLETE, …) |
 | Publish | `/joint_states` | `sensor_msgs/JointState` | Planned UR3 joints (10 Hz) |
 | Publish | `/trajectory_preview` | `geometry_msgs/PoseArray` | RViz visualisation |
@@ -160,6 +161,8 @@ Calibration constants live in `src/ur3_selfie_draw.py`:
 | `move_group not available` | Wait ~25 s after launch — MoveIt2 takes a while to load |
 | Robot not moving on real UR3 | Set teach pendant to **Remote Control** mode |
 | Wrong colour drawn | The mapping `colour → slot` is hard-coded in `COLOUR_TO_MARKER` in `ur3_drawing_node.py`. Either re-arrange the markers in the holder to match, or edit that dict. |
+| Robot draws with default marker regardless of GUI selection | Watch the motion-node log when you click Start. It should print four lines in order: `[GUI] >>> Received raw command: 'START:<colour>'`, `[GUI] Parsed command='START' payload='<colour>'`, `[GUI] ✓ Colour set to '<colour>'`, then `[Plan] >>> Pipeline reading colour: '<colour>'`. If any line is missing or shows the wrong colour, the chain is broken at that step. |
+| Pipeline never starts after Process | The motion node intentionally does **not** auto-start when perception strokes arrive — you must click **Start Drawing** in the GUI. Strokes are cached and used as soon as you press Start. |
 | Strokes off-canvas | Recalibrate `CANVAS_ORIGIN_ROBOT` in `src/ur3_selfie_draw.py` |
 | Strokes appear out of nowhere / robot freezes / topics from another team | `ROS_DOMAIN_ID` is wrong. **Every terminal** must `export ROS_DOMAIN_ID=42` before running anything. Verify with `echo $ROS_DOMAIN_ID`. |
 

@@ -100,8 +100,8 @@ Three independent subsystems work together to capture a selfie and draw it with 
 | `/drawing_preview_image` | `sensor_msgs/Image` | perception_node, visualization_node | **GUI** node | Rendered preview of what robot will draw |
 | `/drawing_status` | `std_msgs/String` | **ur3_drawing_node** | **GUI** node | Pipeline state (WAITING, EXECUTING, COMPLETE, ERROR, …) |
 | `/trajectory_preview` | `geometry_msgs/PoseArray` | ur3_drawing_node | RViz | 3D waypoint visualisation |
-| `/gui/command` | `std_msgs/String` | **GUI** node | **ur3_drawing_node** | Commands: START, PAUSE, RESUME, STOP |
-| `/gui/marker_colour` | `std_msgs/String` | **GUI** node | **ur3_drawing_node** | One of `red` / `blue` / `green` / `black`; published once before START |
+| `/gui/command` | `std_msgs/String` | **GUI** node | **ur3_drawing_node** | `START:<colour>` (e.g. `START:blue`), `PAUSE`, `RESUME`, `STOP`. The colour suffix is the authoritative source of the marker selection. |
+| `/gui/marker_colour` | `std_msgs/String` | **GUI** node | **ur3_drawing_node** | Same colour value, published in parallel for debug/status consumers. The motion node uses the suffix in `START:<colour>` for the actual selection (avoids a callback ordering race). |
 
 ---
 
@@ -112,8 +112,8 @@ Three independent subsystems work together to capture a selfie and draw it with 
 | Direction | Topic | What |
 |-----------|-------|------|
 | **Publishes** | `/raw_image` | Captured photo from laptop webcam |
-| **Publishes** | `/gui/command` | START / PAUSE / RESUME / STOP commands |
-| **Publishes** | `/gui/marker_colour` | Chosen marker colour (red/blue/green/black) — sent right before START |
+| **Publishes** | `/gui/command` | `START:<colour>` (where `<colour>` is one of `red` / `blue` / `green` / `black`), and `PAUSE` / `RESUME` / `STOP` |
+| **Publishes** | `/gui/marker_colour` | Same colour value sent in parallel — kept for any subscriber that wants the raw selection without parsing the start command |
 | **Subscribes** | `/drawing_strokes` | Receives stroke JSON → renders preview |
 | **Subscribes** | `/drawing_status` | Progress/state updates from motion |
 | **Subscribes** | `/drawing_preview_image` | Preview image from perception visualisation |
@@ -428,13 +428,41 @@ and the URScript `set_tcp()` value are unchanged between markers.
 The motion node uses that single marker for the entire artwork.
 
 ```
-GUI colour combo box  ──/gui/marker_colour──►  ur3_drawing_node
-                                                     │
-                                                     ▼
-                                          marker_idx = COLOUR_TO_MARKER[colour]
-                                          stroke_quat = TOOL_QUAT ⊗ Rz(-90° × marker_idx)
-                                          (every stroke uses the same orientation)
+GUI                                              ur3_drawing_node
+ │                                                       │
+ │  publish("START:blue")  ──/gui/command──►   _on_gui_command()
+ │  publish("blue")        ──/gui/marker_colour──►       │      (parses "START:blue" → cmd=START, colour=blue)
+                                                         │      _selected_colour = "blue"
+                                                         ▼
+                                              _start_pipeline_thread()
+                                                         │
+                                                         ▼
+                                          colour = self._selected_colour       ("blue")
+                                          marker_idx = COLOUR_TO_MARKER[colour] (1)
+                                          wrist_3_offset = -90°
+                                          PLAN every stroke with TOOL_QUAT (marker 1's orientation)
+                                          POST-PROCESS: add wrist_3_offset to every joint waypoint's
+                                                        6th joint, with ±2π wrap
+                                          PREPEND a "rotate-only" movej so the wrist visibly swaps
+                                                  to the chosen marker before any horizontal motion
 ```
+
+**Why post-process the wrist_3 instead of asking MoveIt2 for the rotated
+orientation directly?** The 6-DOF UR3 has multiple IK branches that
+satisfy the same end-effector orientation; MoveIt2's
+`/compute_cartesian_path` was free to "absorb" the requested 90°
+tool-Z rotation into wrist_1 / wrist_2 / a wrist-flip, leaving wrist_3
+essentially unchanged regardless of the colour. The post-processing
+approach is mathematically equivalent (the holder is rotationally
+symmetric, so a constant offset on wrist_3 swings marker N into the
+position marker 1 was tracing) and is robust against IK ambiguity.
+
+**Pipeline trigger:** the motion node does **not** auto-start when
+strokes arrive on `/drawing_strokes`. It caches them and waits for
+`START:<colour>` on `/gui/command`. This guarantees the colour is
+honoured: previously the pipeline would auto-start as soon as
+perception published, with `_selected_colour` still at its default,
+so every drawing came out in the default colour.
 
 **Default colour-to-slot mapping** (edit `COLOUR_TO_MARKER` in
 [`ur3_drawing_node.py`](ros2_ws/src/ur3_motion_planning/ur3_motion_planning/ur3_drawing_node.py)
@@ -445,16 +473,26 @@ to match how you physically loaded the holder):
 | red    | 0          | 0°           | 0°                                |
 | blue   | 1          | 90°          | -90°                              |
 | green  | 2          | 180°         | -180°                             |
-| black  | 3          | 270°         | -270° (= +90°)                    |
+| black  | 3          | 270°         | -270° (= +90° after ±2π wrap)     |
 
 Either physically load the markers so this mapping holds, or edit the
 dict in code to match the order you loaded.
 
-**Topic contract:** the GUI publishes the chosen colour on
-`/gui/marker_colour` (`std_msgs/String`, lowercase) **before** sending
-the `START` command on `/gui/command`. The motion node defaults to
-`black` if no colour was received (so file-mode and no-GUI runs still
-work).
+**Default colour:** if a `START` arrives without a colour suffix (and
+no prior `/gui/marker_colour` was received), the motion node uses
+`DEFAULT_COLOUR` (currently `"black"`). This keeps file-mode and no-GUI
+test runs working.
+
+**Verifying the data flow:** when you click Start Drawing in the GUI,
+the motion node should print these four log lines in order. If any line
+is missing or shows the wrong colour, the chain is broken at that step.
+
+```
+[GUI] >>> Received raw command: 'START:blue'
+[GUI] Parsed command='START' payload='blue'
+[GUI] ✓ Colour set to 'blue' (marker slot 2/4)
+[Plan] >>> Pipeline reading colour: 'blue' (marker_idx=1, wrist_3_offset=-90.0°)
+```
 
 ### Drawing at Angle: Combining 20° Tilt + Cartesian Paths
 
