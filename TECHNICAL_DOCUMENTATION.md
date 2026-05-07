@@ -29,15 +29,17 @@
 
 ## 1. Project Overview
 
-The UR3 Selfie Drawing Robot captures a selfie from a webcam and draws a
-four-coloured line portrait of the subject on a fixed canvas using a
-Universal Robots **UR3** with a custom 3D-printed multi-marker
-end-effector. The system runs on **ROS 2 Humble** and consists of three
-loosely-coupled subsystems (GUI, Perception, Motion Planning) that
-communicate exclusively over ROS topics. MoveIt2 plans collision-aware
-Cartesian paths around the table and the marker holder; URScript executes
-the planned joint trajectories on the real robot or a Polyscope
-simulator.
+The UR3 Selfie Drawing Robot captures a selfie from a webcam and draws
+a line portrait of the subject on a fixed canvas using a Universal
+Robots **UR3** with a custom 3D-printed end-effector that holds **four
+markers** (red, blue, green, black). The user picks one colour in the
+GUI; the wrist rotates to that marker's slot and the entire artwork is
+drawn in that single colour. The system runs on **ROS 2 Humble** and
+consists of three loosely-coupled subsystems (GUI, Perception, Motion
+Planning) that communicate exclusively over ROS topics. MoveIt2 plans
+collision-aware Cartesian paths around the table and the marker
+holder; URScript executes the planned joint trajectories on the real
+robot or a Polyscope simulator.
 
 ---
 
@@ -55,7 +57,7 @@ simulator.
 - **Canny edge detection (σ=3)** with morphological gap-closing for clean strokes.
 - **Nearest-Neighbour TSP + 2-Opt** stroke ordering (~30% pen-up travel saved).
 - **MoveIt2 Cartesian planning** with table + marker-holder collision objects.
-- **Four-colour drawing** via wrist_3 rotation: each stroke automatically uses the next of four markers.
+- **User-selectable colour** (red / blue / green / black) chosen in the GUI; the wrist rotates once at the start to align the chosen marker, then the whole artwork is drawn in that single colour.
 - Works against the **Polyscope simulator** and on the **real UR3** with a single launch flag.
 
 ---
@@ -113,7 +115,7 @@ Tested and confirmed working on:
 
 1. **Mount the UR3** on the rigid table; tighten the base bolts.
 2. **Bolt the 3D-printed marker holder** to the UR3 tool flange. Confirm the holder is centred on the flange and that the four marker slots are oriented at 0°, 90°, 180°, 270° around the wrist axis.
-3. **Insert the four markers** — the order determines the colour sequence. Stroke 1 uses marker 1 (slot at 0°), stroke 2 uses marker 2 (slot at 90°), etc.
+3. **Insert the four markers** in this order to match the default colour mapping in the code: slot 0° = **red**, slot 90° = **blue**, slot 180° = **green**, slot 270° = **black**. If you want a different physical loading order, edit `COLOUR_TO_MARKER` in [`ur3_drawing_node.py`](ros2_ws/src/ur3_motion_planning/ur3_motion_planning/ur3_drawing_node.py).
 4. **Place the canvas** flat on the table, ~200 × 150 mm of usable area, top-left corner ≈ `(x=0.185, y=0.170, z=0.010)` m in the robot base frame (this is the calibrated default; recalibrate if your table differs).
 5. **Connect the Ethernet** cable between the host laptop and the UR3.
 6. **Connect the webcam** (USB or built-in) to the host.
@@ -244,8 +246,8 @@ Wait ~30 s for the Docker container to come up. Visit
 2. Click **Capture** → image is published on `/raw_image`.
 3. Perception runs (background removal → Canny → strokes); takes 2–4 s on CPU.
 4. GUI receives the stroke preview from `/drawing_preview_image` and shows the line drawing.
-5. Click **Start Drawing** → motion node receives `START`, plans each stroke, executes via URScript.
-6. The robot draws the portrait, **rotating wrist_3 by 90° between strokes** so each stroke is drawn with the next marker.
+5. Pick a colour from the **Colour** dropdown in the GUI (red / blue / green / black).
+6. Click **Start Drawing** → the GUI publishes the colour on `/gui/marker_colour` and then `START` on `/gui/command`. The motion node rotates the wrist to the matching slot once at the start, then plans + executes every stroke in that single colour.
 7. GUI status updates from `WAITING_FOR_PERCEPTION` → `OPTIMIZING_PATH` → `PLANNING_WITH_MOVEIT2` → `EXECUTING` → `COMPLETE`.
 
 ---
@@ -276,8 +278,11 @@ Wait ~30 s for the Docker container to come up. Visit
 |-----------|-------|------|------|
 | Publish | `/raw_image` | `sensor_msgs/Image` | perception_node |
 | Publish | `/gui/command` | `std_msgs/String` | ur3_drawing_node |
+| Publish | `/gui/marker_colour` | `std_msgs/String` | ur3_drawing_node |
 
 Commands published on `/gui/command`: `START`, `PAUSE`, `RESUME`, `STOP`.
+Values published on `/gui/marker_colour` (lowercase): `red`, `blue`,
+`green`, `black`. The colour is sent once, immediately before `START`.
 
 **How to run independently:**
 ```bash
@@ -290,7 +295,10 @@ python3 ~/gui/selfie_drawing_gui_ros2.py
 ```
 
 **Configurable settings:** Camera index in `CameraHandler(camera_index=N)`
-(default `0`). Window size in `MainWindow.resize(1280, 780)`.
+(default `0`). Window size in `MainWindow.resize(1280, 780)`. Available
+colours in `self.colour_combo.addItems([...])` in
+`selfie_drawing_gui_starter.py`. To add a new colour, also add an entry
+to `COLOUR_TO_MARKER` in the motion node.
 
 **Known limitations:**
 - One webcam at a time; GUI must be restarted to switch cameras.
@@ -374,28 +382,32 @@ ros2 launch selfie_perception perception_pipeline.launch.py
 **Owner:** Domenic
 **ROS 2 package:** `ur3_motion_planning`
 
-**Purpose:** Receive strokes, plan collision-safe Cartesian paths with
-MoveIt2, cycle through 4 markers, and execute on the UR3 via URScript.
+**Purpose:** Receive strokes and a colour selection, plan collision-safe
+Cartesian paths with MoveIt2, rotate the wrist to the chosen marker,
+and execute on the UR3 via URScript.
 
 **Pipeline:**
 
 ```
 Strokes JSON (from /drawing_strokes or face*.json)
+Colour     (from /gui/marker_colour, default 'black')
    │
    ▼  Scale to 95 % of canvas
    ▼  Nearest-Neighbour TSP + 2-Opt (~30 % travel saved)
 Optimised stroke list
    │
-   ▼  For each stroke s_idx:
-   │     marker_idx = s_idx % 4
-   │     quat = TOOL_QUAT ⊗ Rz(-90° × marker_idx)
+   ▼  marker_idx = COLOUR_TO_MARKER[colour]
+   ▼  quat       = TOOL_QUAT ⊗ Rz(-90° × marker_idx)   (set ONCE)
+   │
+   ▼  For each stroke:
    │     For travel + draw + lift:
    │        /compute_cartesian_path service (MoveIt2)  ←  COLLISION-AWARE
-Joint trajectories (per stroke)
+   │        (every stroke uses the same quat — single colour)
+Joint trajectories
    │
    ▼  Convert to movej commands → URScript program
    ▼  TCP socket → UR3 (port 30002)
-Robot draws
+Robot draws (single colour selected by user)
 ```
 
 **Nodes:**
@@ -411,6 +423,7 @@ Robot draws
 |-------|------|-------|
 | `/drawing_strokes` | `std_msgs/String` (JSON) | When `stroke_source=topic` |
 | `/gui/command` | `std_msgs/String` | START/PAUSE/RESUME/STOP |
+| `/gui/marker_colour` | `std_msgs/String` | `red` / `blue` / `green` / `black` (defaults to `black`) |
 
 **Publishes:**
 
@@ -437,15 +450,26 @@ ros2 run ur3_motion_planning motion_planning_node --ros-args \
   -p stroke_source:=file -p face:=face1 -p robot_ip:=192.168.56.101
 ```
 
-**Multi-marker rotation (4-colour drawing).** The 3D-printed holder
+**Single-marker drawing (user-selected colour).** The 3D-printed holder
 carries four markers at 0°, 90°, 180°, 270° around the wrist axis. The
-node selects `marker_idx = stroke_index % 4` per stroke and rotates the
-target tool orientation by `-marker_idx × 90°` around the tool's own
-Z-axis. MoveIt2 plans the rest, naturally rotating wrist_3 by 90° during
-the pen-up travel between strokes. Because the holder is rotationally
-symmetric, every marker tip lands at the same world position when its
-marker_idx is active — `CANVAS_ORIGIN_ROBOT`, `px_to_robot()`, and the
-URScript `set_tcp()` value are unchanged between markers.
+GUI publishes the chosen colour on `/gui/marker_colour`; the motion
+node looks the colour up in `COLOUR_TO_MARKER` to get a slot index,
+rotates the target tool orientation by `-marker_idx × 90°` around the
+tool's own Z-axis, and uses that orientation for **every** stroke.
+Because the holder is rotationally symmetric, every marker tip lands
+at the same world position when its slot is active — `CANVAS_ORIGIN_ROBOT`,
+`px_to_robot()`, and the URScript `set_tcp()` value are unchanged
+between colours.
+
+Default mapping (edit `COLOUR_TO_MARKER` in `ur3_drawing_node.py` to
+match your physical loading order):
+
+| Colour | Slot index | Holder angle |
+|--------|-----------:|-------------:|
+| red    | 0          | 0°           |
+| blue   | 1          | 90°          |
+| green  | 2          | 180°         |
+| black  | 3          | 270°         |
 
 **Configurable parameters:**
 
@@ -471,7 +495,8 @@ URScript `set_tcp()` value are unchanged between markers.
 | `JOINT_VEL`, `LINEAR_VEL`, etc. | mid-speed | URScript motion params |
 
 **Known limitations & assumptions:**
-- The 4 markers must be physically loaded into slots 0, 90, 180, 270° in that order — the colour sequence per stroke is determined by slot index.
+- The colour-to-slot mapping (`COLOUR_TO_MARKER`) is hard-coded. Either physically load the markers to match the default mapping, or edit the dict to reflect your loading order.
+- Only one colour per drawing — the original "cycle through 4 markers per stroke" mode has been replaced.
 - The holder's collision geometry is approximated as a single 160 × 180 mm box. This is conservative for any single marker but does not exactly match the 4-radial-arms shape.
 - URScript only contains `movej` commands (joint-space moves). MoveIt2 plans Cartesian paths and we feed the resulting joint waypoints directly. `set_tcp()` is set as a courtesy but does not affect `movej` motion.
 - Collision avoidance is enforced **at planning time**. URScript execution itself is open-loop; if the robot is moved by hand mid-execution, no replanning happens.
@@ -556,7 +581,8 @@ The collision-object dimensions are also defined in
 | Robot is connected but does nothing | Real UR3: pendant must be in **Remote Control** mode (Settings → System → Remote Control). |
 | Robot makes a protective stop on first move | Reduce motion params to **Conservative** (see §7). Verify `CANVAS_ORIGIN_ROBOT` is reachable. |
 | Strokes are drawn off the canvas | Recalibrate `CANVAS_ORIGIN_ROBOT` (see §7). |
-| Wrong colour for a stroke | The colour order is determined by how you physically load markers into the holder slots. Stroke `i` uses slot `i % 4`. Re-arrange the markers, no code change needed. |
+| Robot drew with the wrong colour | The mapping `colour name → holder slot` is in `COLOUR_TO_MARKER` in `ur3_drawing_node.py`. Either re-load the markers in the slot order matching the dict, or edit the dict to match your physical loading. |
+| Robot drew in the default (black) instead of the colour I picked | The GUI publishes the colour just before sending START. If the motion node started after the GUI published, the latched message could be missed. Click Start again, or restart the GUI after the motion node is up. |
 | GUI doesn't see the perception preview | Confirm `ROS_DOMAIN_ID=42` is set in the GUI terminal *and* the launch file does `SetEnvironmentVariable('ROS_DOMAIN_ID', '42')`. Both must match. |
 | GUI camera shows "Disconnected" | Camera index conflict; close other apps using the webcam, or change `CameraHandler(camera_index=1)`. |
 | `rembg` slow on first run | Model download (~170 MB). Subsequent runs are fast (~2–4 s on CPU). |

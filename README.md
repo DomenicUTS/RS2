@@ -2,12 +2,13 @@
 
 **Team Picasso | Robotics Studio 2 | UTS**
 
-ROS 2 motion-planning subsystem for a four-colour selfie drawing robot.
-A UR3 takes strokes from the perception pipeline, plans collision-safe
-trajectories with MoveIt2, and executes them on the robot via URScript.
-The custom 3D-printed end-effector holds **four markers** at 0°, 90°, 180°,
-and 270° — wrist_3 rotates 90° between strokes so each marker contributes
-to a multi-coloured artwork.
+ROS 2 motion-planning subsystem for a selfie drawing robot. A UR3 takes
+strokes from the perception pipeline, plans collision-safe trajectories
+with MoveIt2, and executes them on the robot via URScript. The custom
+3D-printed end-effector holds **four markers** at 0°, 90°, 180°, 270°
+around the wrist axis. The user picks a single colour (red / blue /
+green / black) in the GUI; the motion node rotates the wrist to the
+matching slot and draws the entire artwork with that one marker.
 
 For full system documentation (hardware setup, GUI/perception integration,
 troubleshooting), see [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md).
@@ -24,8 +25,9 @@ For cross-subsystem topic flow and run modes, see
    (~25–30% pen-up travel saved).
 3. **Plans with MoveIt2** — `/compute_cartesian_path` with table + marker
    holder collision objects.
-4. **Cycles markers** — Each stroke uses the next of four markers
-   (wrist_3 rotates 90° during pen-up travel).
+4. **Single colour per drawing** — Subscribes to `/gui/marker_colour`
+   and rotates wrist_3 to the slot matching the chosen colour. All
+   strokes use that one marker (red / blue / green / black).
 5. **Executes on the UR3** — Generates URScript and ships it over TCP
    (port 30002) to the real robot or Polyscope simulator.
 
@@ -120,6 +122,7 @@ RS2/
 |-----------|-------|------|-------|
 | Subscribe | `/drawing_strokes` | `std_msgs/String` | JSON strokes from perception |
 | Subscribe | `/gui/command` | `std_msgs/String` | START / PAUSE / RESUME / STOP |
+| Subscribe | `/gui/marker_colour` | `std_msgs/String` | `red` / `blue` / `green` / `black` (defaults to `black` if not received before START) |
 | Publish | `/drawing_status` | `std_msgs/String` | Pipeline state (LOADING, EXECUTING, COMPLETE, …) |
 | Publish | `/joint_states` | `sensor_msgs/JointState` | Planned UR3 joints (10 Hz) |
 | Publish | `/trajectory_preview` | `geometry_msgs/PoseArray` | RViz visualisation |
@@ -156,7 +159,7 @@ Calibration constants live in `src/ur3_selfie_draw.py`:
 | `ConnectionRefusedError 192.168.56.101:30002` | Start the simulator: `ros2 run ur_client_library start_ursim.sh -m ur3` |
 | `move_group not available` | Wait ~25 s after launch — MoveIt2 takes a while to load |
 | Robot not moving on real UR3 | Set teach pendant to **Remote Control** mode |
-| Wrong colour drawn | Check the marker order in the holder matches `marker_idx = stroke % 4` |
+| Wrong colour drawn | The mapping `colour → slot` is hard-coded in `COLOUR_TO_MARKER` in `ur3_drawing_node.py`. Either re-arrange the markers in the holder to match, or edit that dict. |
 | Strokes off-canvas | Recalibrate `CANVAS_ORIGIN_ROBOT` in `src/ur3_selfie_draw.py` |
 | Strokes appear out of nowhere / robot freezes / topics from another team | `ROS_DOMAIN_ID` is wrong. **Every terminal** must `export ROS_DOMAIN_ID=42` before running anything. Verify with `echo $ROS_DOMAIN_ID`. |
 

@@ -1,9 +1,9 @@
 # `ur3_motion_planning` — ROS 2 Package
 
 Motion-planning node for the UR3 Selfie Drawing Robot (Team Picasso).
-Subscribes to perception strokes, plans collision-aware Cartesian paths
-with MoveIt2, cycles through 4 markers (one colour per stroke), and
-executes URScript on the UR3.
+Subscribes to perception strokes and a colour selection from the GUI,
+plans collision-aware Cartesian paths with MoveIt2, rotates wrist_3 to
+the chosen marker, and executes URScript on the UR3.
 
 For top-level setup and the integrated pipeline, see
 [`~/RS2/README.md`](../../../README.md) and
@@ -94,20 +94,30 @@ ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
 
 ---
 
-## Multi-Marker Drawing
+## Colour Selection (Single-Marker Drawing)
 
-The end-effector holder carries 4 markers spaced 90° around the wrist_3 axis,
-each tilted 20° outward. Per stroke, the node selects the next marker
-(`marker_idx = stroke_index % 4`) and rotates the planned tool orientation
-about its own Z by `-marker_idx * 90°`. MoveIt2 then naturally rotates
-wrist_3 by 90° during the pen-up travel between strokes, swapping the
-active marker. Because the holder is rotationally symmetric, every marker
-tip lands at the same world position — `px_to_robot()` and `set_tcp()` do
-not change between markers.
+The end-effector holder carries 4 markers spaced 90° around the wrist_3
+axis, each tilted 20° outward. The GUI publishes the chosen colour
+(`red` / `blue` / `green` / `black`) on `/gui/marker_colour`. The
+motion node maps the colour to a slot index via `COLOUR_TO_MARKER`,
+rotates the planned tool orientation about its own Z by
+`-marker_idx * 90°`, and uses that orientation for the entire drawing.
 
 See [`ur3_drawing_node.py`](ur3_motion_planning/ur3_drawing_node.py) —
-look for `marker_tool_quat()` and the per-stroke loop in
-`_plan_and_build_urscript()`.
+look for `COLOUR_TO_MARKER`, `marker_tool_quat()`, and
+`_on_gui_colour()`.
+
+To change the colour-to-slot mapping (e.g. you loaded the markers in a
+different order), edit `COLOUR_TO_MARKER` directly:
+
+```python
+COLOUR_TO_MARKER = {
+    "red":   0,
+    "blue":  1,
+    "green": 2,
+    "black": 3,
+}
+```
 
 ---
 
@@ -117,6 +127,7 @@ look for `marker_tool_quat()` and the per-stroke loop in
 |-----------|-------|------|---------|
 | Subscribe | `/drawing_strokes` | `std_msgs/String` | Perception → motion |
 | Subscribe | `/gui/command` | `std_msgs/String` | GUI → motion (START/STOP/…) |
+| Subscribe | `/gui/marker_colour` | `std_msgs/String` | GUI → motion (`red`/`blue`/`green`/`black`) |
 | Publish | `/drawing_status` | `std_msgs/String` | Motion → GUI |
 | Publish | `/trajectory_preview` | `geometry_msgs/PoseArray` | RViz |
 | Publish | `/joint_states` | `sensor_msgs/JointState` | MoveIt2 / RViz |

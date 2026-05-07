@@ -128,13 +128,24 @@ else:
 
 # ── Multi-marker holder ──
 # Custom 3D-printed holder carries 4 markers at 0°, 90°, 180°, 270° around the
-# wrist_3 axis. Each marker is tilted 20° outward (radially). To cycle through
-# markers we rotate tool0 around its own Z-axis by -marker_idx * 90°.
-# The holder is rotationally symmetric, so each marker tip lands at the same
-# world position when its corresponding wrist_3 offset is applied — meaning
-# px_to_robot() and TCP_OFFSET stay valid for every marker.
+# wrist_3 axis. Each marker is tilted 20° outward (radially). To activate
+# marker N we rotate tool0 around its own Z-axis by -N * 90°. The holder is
+# rotationally symmetric, so each marker tip lands at the same world position
+# when its corresponding wrist_3 offset is applied — meaning px_to_robot()
+# and TCP_OFFSET stay valid for every marker.
 MARKER_COUNT = 4
 MARKER_STEP_RAD = -math.pi / 2.0  # -90° around tool Z per marker
+
+# Map of GUI colour name → marker slot index (0–3) on the physical holder.
+# IMPORTANT: physically load the markers into the holder so this mapping
+# matches reality, OR edit this table to match your loading order.
+COLOUR_TO_MARKER = {
+    "red":   0,
+    "blue":  1,
+    "green": 2,
+    "black": 3,
+}
+DEFAULT_COLOUR = "black"
 
 
 def _quat_mul(q1, q2):
@@ -203,6 +214,9 @@ class UR3DrawingNode(Node):
         self._metrics = Metrics() if IMPORTS_OK else None
         self._pipeline_thread = None
         self._current_joints = list(HOME_JOINTS)  # track planned joint state
+        # Selected colour from the GUI (defaults so file-mode and no-GUI
+        # runs still work). Updated by /gui/marker_colour subscriber.
+        self._selected_colour = DEFAULT_COLOUR
 
         # ── Callback groups ──
         self._service_cb_group = ReentrantCallbackGroup()
@@ -214,6 +228,8 @@ class UR3DrawingNode(Node):
             String, "drawing_strokes", self._on_drawing_strokes, 10)
         self.gui_cmd_sub = self.create_subscription(
             String, "gui/command", self._on_gui_command, 10)
+        self.gui_colour_sub = self.create_subscription(
+            String, "gui/marker_colour", self._on_gui_colour, 10)
 
         # ── Joint state publisher (replaces joint_state_publisher node) ──
         # Publishes the current planned joint positions so MoveIt2 and RViz
@@ -267,15 +283,62 @@ class UR3DrawingNode(Node):
             return
         self.get_logger().info(
             f"[Perception] Received {len(strokes)} strokes "
-            f"({sum(len(s) for s in strokes)} pts)")
+            f"({sum(len(s) for s in strokes)} pts) — "
+            f"waiting for GUI START to begin drawing")
         self._topic_strokes = strokes
-        if not self._startup_done and self.stroke_source == "topic":
-            self._start_pipeline_thread()
+        # NOTE: do NOT auto-start the pipeline here. Auto-starting makes
+        # the drawing run with the default colour ('black') the moment
+        # perception publishes strokes — *before* the user has clicked
+        # "Start Drawing" in the GUI and chosen a colour. The pipeline
+        # is now triggered exclusively by the START:<colour> command in
+        # _on_gui_command, so the chosen colour is always honoured.
+
+    def _on_gui_colour(self, msg: String):
+        colour = msg.data.strip().lower()
+        if colour not in COLOUR_TO_MARKER:
+            self.get_logger().warn(
+                f"[GUI] Unknown colour '{colour}', keeping '{self._selected_colour}'")
+            return
+        self._selected_colour = colour
+        self.get_logger().info(
+            f"[GUI] Marker colour set to '{colour}' "
+            f"(slot {COLOUR_TO_MARKER[colour]+1}/{MARKER_COUNT})")
 
     def _on_gui_command(self, msg: String):
-        cmd = msg.data.strip().upper()
-        self.get_logger().info(f"[GUI] Command: {cmd}")
-        if cmd == "START" and self._topic_strokes is not None:
+        raw = msg.data.strip()
+        self.get_logger().info(f"[GUI] >>> Received raw command: '{raw}'")
+        # Allow "START:<colour>" so the colour selection is atomic with
+        # the start command (avoids the race where the separate colour
+        # topic message hasn't been processed yet when START fires).
+        if ":" in raw:
+            cmd, _, payload = raw.partition(":")
+            cmd = cmd.upper()
+            payload = payload.strip().lower()
+        else:
+            cmd = raw.upper()
+            payload = ""
+        self.get_logger().info(
+            f"[GUI] Parsed command='{cmd}' payload='{payload}'")
+        if cmd == "START":
+            if self._topic_strokes is None:
+                self.get_logger().warn(
+                    "[GUI] START received but no strokes available yet "
+                    "— ignoring (run perception first)")
+                return
+            if payload and payload in COLOUR_TO_MARKER:
+                self._selected_colour = payload
+                self.get_logger().info(
+                    f"[GUI] ✓ Colour set to '{payload}' "
+                    f"(marker slot {COLOUR_TO_MARKER[payload]+1}/{MARKER_COUNT})")
+            elif payload:
+                self.get_logger().warn(
+                    f"[GUI] Unknown colour '{payload}' in START — "
+                    f"using current '{self._selected_colour}' "
+                    f"(known: {list(COLOUR_TO_MARKER.keys())})")
+            else:
+                self.get_logger().warn(
+                    f"[GUI] START with no colour payload — "
+                    f"using current '{self._selected_colour}'")
             self._startup_done = False
             self._start_pipeline_thread()
         elif cmd == "STOP":
@@ -555,23 +618,46 @@ class UR3DrawingNode(Node):
         total_strokes = len(strokes)
         skipped = 0
 
+        # ── Single-marker drawing ──
+        # The GUI publishes a colour (combined with START as "START:<colour>").
+        # We map it to one of the 4 holder slots; the active marker is
+        # selected by rotating wrist_3 by `marker_idx * -90°`.
+        colour = self._selected_colour
+        marker_idx = COLOUR_TO_MARKER.get(colour, COLOUR_TO_MARKER[DEFAULT_COLOUR])
+        wrist_3_offset = marker_idx * MARKER_STEP_RAD  # applied as a post-step
+        self.get_logger().info("=" * 60)
+        self.get_logger().info(
+            f"[Plan] >>> Pipeline reading colour: '{colour}' "
+            f"(marker_idx={marker_idx}, "
+            f"wrist_3_offset={math.degrees(wrist_3_offset):+.1f}°)")
+        self.get_logger().info("=" * 60)
+
+        # We always plan the trajectory as if marker 1 were active (i.e.
+        # using TOOL_QUAT for orientation). After all planning is done, we
+        # add `wrist_3_offset` to every joint waypoint's wrist_3. Because
+        # the marker holder is rotationally symmetric, that rotation
+        # physically swings the desired marker into the canvas position
+        # without disturbing the marker tip's world coordinates.
+        #
+        # Why post-processing: MoveIt2's `/compute_cartesian_path` is free
+        # to pick any IK branch that satisfies the requested orientation,
+        # and on a 6-DOF UR3 a 90° tool-Z rotation can be "absorbed" by
+        # wrist_1 / wrist_2 / a wrist-flip — leaving wrist_3 essentially
+        # unchanged regardless of the requested orientation. We saw this:
+        # the pre-rotation visibly worked, but during the draw the planner
+        # rotated wrist_3 right back. Post-processing wrist_3 sidesteps
+        # the IK ambiguity entirely.
+        stroke_quat = marker_tool_quat(0)
+
         for s_idx, stroke in enumerate(strokes):
             if not stroke:
                 continue
 
-            # Cycle through 4 markers — one colour per stroke. The tool0 is
-            # rotated about its own Z so the next physical marker lands at
-            # the canvas. wrist_3 changes by 90° between strokes (during
-            # pen-up travel) to swap colours.
-            marker_idx = s_idx % MARKER_COUNT
-            stroke_quat = marker_tool_quat(marker_idx)
-
             self.get_logger().info(
                 f"[Plan] Stroke {s_idx+1}/{total_strokes} "
-                f"({len(stroke)} pts) | marker #{marker_idx+1}/{MARKER_COUNT}")
+                f"({len(stroke)} pts)")
 
-            # ── Travel to above first point (pen-up) — rotates wrist_3 to
-            #    swap markers while the EE is safely above the canvas ──
+            # ── Travel to above first point (pen-up) ──
             travel_pos = px_to_robot(*stroke[0])
             travel_pos[2] = Z_TRAVEL
             travel_wp = [self._make_pose(travel_pos, quat=stroke_quat)]
@@ -629,6 +715,44 @@ class UR3DrawingNode(Node):
         if not all_segments:
             self.get_logger().error("[Plan] No waypoints planned at all")
             return None
+
+        # ── Apply wrist_3 offset (single-marker activation) ──
+        # Everything above was planned with marker 1's orientation. We now
+        # shift the 6th joint of every waypoint by `wrist_3_offset` so the
+        # holder rotates around tool-Z to put the chosen marker into the
+        # position marker 1 was tracing. Tool0's origin lies on the
+        # wrist_3 axis, so only the 6th joint needs to change — the
+        # marker tip's world position is preserved by rotational symmetry.
+        if wrist_3_offset != 0.0:
+            shifted = []
+            for joints, is_travel, comment in all_segments:
+                new_joints = list(joints)
+                w = new_joints[5] + wrist_3_offset
+                while w < -2.0 * math.pi:
+                    w += 2.0 * math.pi
+                while w > 2.0 * math.pi:
+                    w -= 2.0 * math.pi
+                new_joints[5] = w
+                shifted.append((new_joints, is_travel, comment))
+            all_segments = shifted
+
+            # Prepend an explicit "rotate at home" movej so the wrist swaps
+            # to the chosen marker BEFORE any horizontal motion (visible to
+            # the operator). Other joints stay at HOME, only wrist_3 moves.
+            rotated_home = list(HOME_JOINTS)
+            w = HOME_JOINTS[5] + wrist_3_offset
+            while w < -2.0 * math.pi:
+                w += 2.0 * math.pi
+            while w > 2.0 * math.pi:
+                w -= 2.0 * math.pi
+            rotated_home[5] = w
+            self.get_logger().info(
+                f"[Plan] Wrist_3 offset {math.degrees(wrist_3_offset):+.1f}° "
+                f"applied; first move sets wrist_3 → {w:.3f} rad to "
+                f"align '{colour}' marker")
+            all_segments = [
+                (rotated_home, True, f"align marker {marker_idx+1} ({colour})")
+            ] + all_segments
 
         self.get_logger().info(
             f"[Plan] {len(all_segments)} movej commands "

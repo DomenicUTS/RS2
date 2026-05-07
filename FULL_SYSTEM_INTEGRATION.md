@@ -101,6 +101,7 @@ Three independent subsystems work together to capture a selfie and draw it with 
 | `/drawing_status` | `std_msgs/String` | **ur3_drawing_node** | **GUI** node | Pipeline state (WAITING, EXECUTING, COMPLETE, ERROR, …) |
 | `/trajectory_preview` | `geometry_msgs/PoseArray` | ur3_drawing_node | RViz | 3D waypoint visualisation |
 | `/gui/command` | `std_msgs/String` | **GUI** node | **ur3_drawing_node** | Commands: START, PAUSE, RESUME, STOP |
+| `/gui/marker_colour` | `std_msgs/String` | **GUI** node | **ur3_drawing_node** | One of `red` / `blue` / `green` / `black`; published once before START |
 
 ---
 
@@ -112,6 +113,7 @@ Three independent subsystems work together to capture a selfie and draw it with 
 |-----------|-------|------|
 | **Publishes** | `/raw_image` | Captured photo from laptop webcam |
 | **Publishes** | `/gui/command` | START / PAUSE / RESUME / STOP commands |
+| **Publishes** | `/gui/marker_colour` | Chosen marker colour (red/blue/green/black) — sent right before START |
 | **Subscribes** | `/drawing_strokes` | Receives stroke JSON → renders preview |
 | **Subscribes** | `/drawing_status` | Progress/state updates from motion |
 | **Subscribes** | `/drawing_preview_image` | Preview image from perception visualisation |
@@ -214,7 +216,7 @@ python3 ~/gui/selfie_drawing_gui_ros2.py
 4. GUI shows preview of what will be drawn
 5. Click "Start Drawing" button
 6. Motion node receives strokes, plans collision-safe MoveIt2 trajectories, executes via URScript
-7. Robot draws the face at 20° angle, **cycling through 4 markers** — wrist_3 rotates 90° between strokes so each stroke gets the next colour, producing a four-coloured artwork
+7. Robot draws the face at 20° angle using the **colour selected in the GUI** (red / blue / green / black). The wrist rotates once at the start to align the chosen marker with the canvas; the entire artwork is drawn in that single colour.
 
 ### Mode 2: Perception + Motion with MoveIt2 (no GUI)
 
@@ -413,38 +415,46 @@ end
 
 This tells the robot: *"Treat this offset as the tool center for all movel/movej paths."* The robot's IK solver then adjusts joint angles so the actual marker tip reaches the commanded positions.
 
-### Multi-Marker (4-Colour) Drawing
+### Single-Colour Drawing (User-Selected)
 
-The 3D-printed end-effector holder carries **four markers** at 0°, 90°, 180°,
-and 270° around the wrist_3 axis, each tilted 20° outward (radially).
-Because the holder is rotationally symmetric, when wrist_3 rotates 90°
-the next marker tip lands at the same world position the previous one
-occupied — so the canvas calibration (`CANVAS_ORIGIN_ROBOT`) and the
-URScript `set_tcp()` value are unchanged between markers.
+The 3D-printed end-effector holder carries **four markers** at 0°, 90°,
+180°, and 270° around the wrist_3 axis, each tilted 20° outward
+(radially). Because the holder is rotationally symmetric, when wrist_3
+rotates 90° the next marker tip lands at the same world position the
+previous one occupied — so the canvas calibration (`CANVAS_ORIGIN_ROBOT`)
+and the URScript `set_tcp()` value are unchanged between markers.
 
-**How it cycles** (in `ur3_drawing_node.py`):
+**The user picks one colour in the GUI before pressing Start Drawing.**
+The motion node uses that single marker for the entire artwork.
 
 ```
-For each stroke s_idx:
-    marker_idx = s_idx % 4              # 0, 1, 2, 3, 0, 1, 2, 3, …
-    quat = TOOL_QUAT ⊗ Rz(-90° × marker_idx)
-    plan travel + draw + lift waypoints with `quat` as orientation
+GUI colour combo box  ──/gui/marker_colour──►  ur3_drawing_node
+                                                     │
+                                                     ▼
+                                          marker_idx = COLOUR_TO_MARKER[colour]
+                                          stroke_quat = TOOL_QUAT ⊗ Rz(-90° × marker_idx)
+                                          (every stroke uses the same orientation)
 ```
 
-MoveIt2 then naturally rotates wrist_3 by 90° during the pen-up travel
-between strokes (when the EE is safely above the canvas), swapping the
-active marker without any extra explicit rotation step.
+**Default colour-to-slot mapping** (edit `COLOUR_TO_MARKER` in
+[`ur3_drawing_node.py`](ros2_ws/src/ur3_motion_planning/ur3_motion_planning/ur3_drawing_node.py)
+to match how you physically loaded the holder):
 
-| Stroke index | Marker | wrist_3 offset (rel. to baseline) |
-|--------------|--------|------------------------------------|
-| 0, 4, 8, …   | 1      | 0°                                 |
-| 1, 5, 9, …   | 2      | -90°                               |
-| 2, 6, 10, …  | 3      | -180°                              |
-| 3, 7, 11, …  | 4      | -270° (= +90°)                     |
+| Colour | Slot index | Holder angle | wrist_3 offset (rel. to baseline) |
+|--------|-----------:|-------------:|----------------------------------:|
+| red    | 0          | 0°           | 0°                                |
+| blue   | 1          | 90°          | -90°                              |
+| green  | 2          | 180°         | -180°                             |
+| black  | 3          | 270°         | -270° (= +90°)                    |
 
-If your physical holder loads markers in a different order, swap the
-colour cartridges in the holder rather than changing the code — the
-mapping above is the deterministic order of use.
+Either physically load the markers so this mapping holds, or edit the
+dict in code to match the order you loaded.
+
+**Topic contract:** the GUI publishes the chosen colour on
+`/gui/marker_colour` (`std_msgs/String`, lowercase) **before** sending
+the `START` command on `/gui/command`. The motion node defaults to
+`black` if no colour was received (so file-mode and no-GUI runs still
+work).
 
 ### Drawing at Angle: Combining 20° Tilt + Cartesian Paths
 
@@ -582,5 +592,5 @@ You can then:
 - [x] Real robot support (configurable IP)
 - [x] Perception-published strokes flow to motion node
 - [x] GUI status feedback from motion node
-- [x] **Four-marker rotation (wrist_3 swaps colour per stroke)**
-- [ ] Full end-to-end test on real robot with all 4 colours (pending team scheduling)
+- [x] **GUI colour selector (red/blue/green/black) → single-marker drawing via wrist_3 alignment**
+- [ ] Full end-to-end test on real robot for each of the 4 colours (pending team scheduling)
