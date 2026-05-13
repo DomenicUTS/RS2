@@ -21,7 +21,7 @@ from moveit_msgs.srv import ApplyPlanningScene
 from shape_msgs.msg import SolidPrimitive
 import math
 
-# ── Marker holder geometry (must match ur3_selfie_draw.py) ──
+# ── Marker holder geometry (must match motion_planning_lib.py) ──
 MARKER_TILT_DEG = 20.0
 MARKER_TILT_RAD = math.radians(MARKER_TILT_DEG)
 EE_DRAW_HEIGHT  = 0.115  # m – end-effector height above canvas

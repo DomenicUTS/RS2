@@ -119,7 +119,7 @@ def generate_launch_description():
         actions=[
             Node(
                 package='ur3_motion_planning',
-                executable='add_table',
+                executable='scene_publisher',
                 name='scene_setup',
                 output='screen',
             ),

@@ -46,10 +46,10 @@ import sys
 import socket
 from typing import List, Tuple
 
-# Import drawing constants and optimisation from ur3_selfie_draw
+# Import drawing constants and optimisation from motion_planning_lib
 try:
     sys.path.insert(0, os.path.expanduser("~/RS2/src"))
-    from ur3_selfie_draw import (
+    from motion_planning_lib import (
         nearest_neighbour_sort,
         two_opt_improve,
         px_to_robot,
@@ -77,7 +77,7 @@ try:
     )
     IMPORTS_OK = True
 except ImportError as e:
-    print(f"[Warning] Could not import ur3_selfie_draw: {e}")
+    print(f"[Warning] Could not import motion_planning_lib: {e}")
     IMPORTS_OK = False
 
 # ── Quaternion for the tilted tool orientation ──

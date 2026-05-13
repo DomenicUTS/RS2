@@ -2,38 +2,15 @@
 
 **Project:** UR3 Selfie Drawing Robot — Team Picasso
 **Last updated:** 3 May 2026
-**Contributors:** GUI student, Perception student, Domenic Kadioglu (Motion)
+**Contributors:** Mateusz Kopaczynski (GUI/End Effector), Nithish Kannan Bhagavathi Sankaranarayanan (Perception), Domenic Kadioglu (Motion)
 
-> See also: [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) for full
-> hardware/software bill of materials, install steps, and per-subsystem
-> reference. This document is the cross-system topic map and run-mode guide.
+
+
 
 ---
 
-## ⚠️ Always set `ROS_DOMAIN_ID=42` (UTS lab)
-
-In the UTS lab every team's robot and laptop are on the same network.
-By default, ROS 2 nodes from different machines find each other via
-multicast and end up cross-talking — another team's perception node
-can publish strokes to **our** motion node, or our `/gui/command`
-START messages can fire someone else's robot. We've had drawings get
-corrupted by stray topics in past sprints; this is the fix.
-
-**Every terminal that runs `ros2`, `colcon`, or any of our Python nodes
-must first `export ROS_DOMAIN_ID=42`.** The `integrated_pipeline.launch.py`
-file pins the same domain internally via
-`SetEnvironmentVariable('ROS_DOMAIN_ID', '42')`, but external terminals
-(GUI, simulator, monitoring with `ros2 topic`) do not inherit that —
-you have to set it yourself.
-
-```bash
-export ROS_DOMAIN_ID=42      # do this in every terminal, before any ros2/colcon command
-echo $ROS_DOMAIN_ID          # verify (must print: 42)
-```
-
-If different terminals have different domain IDs, nodes will not see
-each other and the pipeline will silently hang (e.g. the GUI never
-shows the preview, or the motion node never receives `/drawing_strokes`).
+## Always set `ROS_DOMAIN_ID=42` (UTS lab)
+ see [README.md](README.md).
 
 ---
 
@@ -55,7 +32,7 @@ cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 **Key files for ROS 2 Python packages:**
 - `setup.py` — Entry points for `ros2 run`
-- `setup.cfg` — (NEW) Tells colcon to install executables to `lib/<pkg>/` for `ros2 run` to find them
+- `setup.cfg` — Tells colcon to install executables to `lib/<pkg>/` for `ros2 run` to find them
 - `package.xml` — Package dependencies and metadata
 
 If you add or modify entry points in `setup.py`, you may need to clean the build cache:
@@ -72,24 +49,6 @@ cd ~/perception && colcon build --packages-select selfie_perception
 ---
 
 ## System Overview
-
-Three independent subsystems work together to capture a selfie and draw it with a UR3 robot arm:
-
-```
-┌──────────────┐       /raw_image        ┌──────────────────┐     /drawing_strokes    ┌──────────────────┐
-│              │  ───────────────────────→│                  │  ───────────────────────→│                  │
-│     GUI      │                          │    PERCEPTION    │                          │  MOTION PLANNING │
-│  (PySide6)   │  ←───────────────────── │  (selfie_perc.)  │  ←───────────────────── │  (ur3_motion)    │
-│              │  /drawing_strokes        │                  │  /drawing_status         │                  │
-│              │  /drawing_preview_image  │                  │                          │                  │
-│              │  /drawing_status         │                  │                          │                  │
-│              │  ───────────────────────→│                  │                          │                  │
-│              │       /gui/command       │                  │  ───────────────────────→│                  │
-└──────────────┘                          └──────────────────┘       /gui/command       └──────────────────┘
-   ~/gui/                                    ~/perception/                                 ~/RS2/
-```
-
----
 
 ## ROS 2 Topics — Complete Map
 
@@ -334,12 +293,12 @@ All three subsystems agree on this stroke format:
 | File | Change |
 |------|--------|
 | `ur3_drawing_node.py` | **REWRITTEN** — Now uses MoveIt2 `/compute_cartesian_path` service for collision-aware trajectory planning. Calls GetCartesianPath for each stroke, then converts planned joint trajectories to URScript. |
-| `add_table_simple.py` | **REWRITTEN** — Publishes table AND marker-holder (160×180mm prism) as collision objects. Marker holder is **attached to tool0** so it moves with EE and MoveIt2 knows to avoid collisions. |
+| `scene_publisher.py` | **REWRITTEN** — Publishes table AND marker-holder (160×180mm prism) as collision objects. Marker holder is **attached to tool0** so it moves with EE and MoveIt2 knows to avoid collisions. |
 | `integrated_pipeline.launch.py` | Includes `ur_moveit_config` launch. Adds delays and TimerActions to: (1) start move_group, (2) publish scene objects, (3) start drawing node. Launches `perception_node` + `visualization_node` from selfie_perception. |
 | `ur3_motion_planning_moveit2.launch.py` | Updated to include scene setup (table + marker holder auto-published). |
-| `setup.py` | Added `add_table` console script entry point. |
+| `setup.py` | Added `scene_publisher` console script entry point. |
 | `setup.cfg` | **NEW** — Required for ROS 2 Python packages. Tells `colcon` to install entry point executables to `lib/ur3_motion_planning/` instead of `bin/` (needed for `ros2 run`). |
-| `ur3_selfie_draw.py` | No changes (20° tilt + 15cm EE height already configured). |
+| `motion_planning_lib.py` | No changes (20° tilt + 15cm EE height already configured). |
 
 ---
 
@@ -419,50 +378,28 @@ This tells the robot: *"Treat this offset as the tool center for all movel/movej
 
 The 3D-printed end-effector holder carries **four markers** at 0°, 90°,
 180°, and 270° around the wrist_3 axis, each tilted 20° outward
-(radially). Because the holder is rotationally symmetric, when wrist_3
-rotates 90° the next marker tip lands at the same world position the
-previous one occupied — so the canvas calibration (`CANVAS_ORIGIN_ROBOT`)
-and the URScript `set_tcp()` value are unchanged between markers.
-
-**The user picks one colour in the GUI before pressing Start Drawing.**
+(radially). **The user picks one colour in the GUI before pressing Start Drawing.**
 The motion node uses that single marker for the entire artwork.
 
-```
-GUI                                              ur3_drawing_node
- │                                                       │
- │  publish("START:blue")  ──/gui/command──►   _on_gui_command()
- │  publish("blue")        ──/gui/marker_colour──►       │      (parses "START:blue" → cmd=START, colour=blue)
-                                                         │      _selected_colour = "blue"
-                                                         ▼
-                                              _start_pipeline_thread()
-                                                         │
-                                                         ▼
-                                          colour = self._selected_colour       ("blue")
-                                          marker_idx = COLOUR_TO_MARKER[colour] (1)
-                                          wrist_3_offset = -90°
-                                          PLAN every stroke with TOOL_QUAT (marker 1's orientation)
-                                          POST-PROCESS: add wrist_3_offset to every joint waypoint's
-                                                        6th joint, with ±2π wrap
-                                          PREPEND a "rotate-only" movej so the wrist visibly swaps
-                                                  to the chosen marker before any horizontal motion
-```
 
 **Why post-process the wrist_3 instead of asking MoveIt2 for the rotated
-orientation directly?** The 6-DOF UR3 has multiple IK branches that
-satisfy the same end-effector orientation; MoveIt2's
-`/compute_cartesian_path` was free to "absorb" the requested 90°
-tool-Z rotation into wrist_1 / wrist_2 / a wrist-flip, leaving wrist_3
-essentially unchanged regardless of the colour. The post-processing
-approach is mathematically equivalent (the holder is rotationally
+orientation directly?** The holder is rotationally
 symmetric, so a constant offset on wrist_3 swings marker N into the
-position marker 1 was tracing) and is robust against IK ambiguity.
+position marker 1 was tracing and is robust against IK ambiguity.
+
+### Why This Approach?
+
+- **Collision safety:** MoveIt2 knows about the table and marker holder shape, so it never plans paths that crash
+- **Correct tool orientation:** The quaternion in the pose ensures the 20° angle is maintained throughout
+- **Efficient execution:** URScript is lightweight and works on both simulator and real robot without UR driver infrastructure
+- **Hybrid:** Leverages MoveIt2's planning strengths while avoiding heavy action server dependencies
+
+---
 
 **Pipeline trigger:** the motion node does **not** auto-start when
 strokes arrive on `/drawing_strokes`. It caches them and waits for
 `START:<colour>` on `/gui/command`. This guarantees the colour is
-honoured: previously the pipeline would auto-start as soon as
-perception published, with `_selected_colour` still at its default,
-so every drawing came out in the default colour.
+honoured.
 
 **Default colour-to-slot mapping** (edit `COLOUR_TO_MARKER` in
 [`ur3_drawing_node.py`](ros2_ws/src/ur3_motion_planning/ur3_motion_planning/ur3_drawing_node.py)
@@ -494,141 +431,6 @@ is missing or shows the wrong colour, the chain is broken at that step.
 [Plan] >>> Pipeline reading colour: 'blue' (marker_idx=1, wrist_3_offset=-90.0°)
 ```
 
-### Drawing at Angle: Combining 20° Tilt + Cartesian Paths
 
-**Goal:** Draw on a canvas while the marker is tilted 20° from vertical.
 
-**Challenge:** Most robot drawing just points the tool straight down. Our system points it at an angle.
 
-**Solution:** The system works in two stages:
-
-1. **MoveIt2 planning stage** (online):
-   - Waypoints are commanded as **Cartesian poses** (x, y, z, quaternion)
-   - The quaternion encodes the tool orientation: tilted 20° around the Y-axis
-   - MoveIt2 plans collision-free joint-space interpolations between these poses
-   - The marker stays at 20° throughout the trajectory
-
-2. **URScript execution stage**:
-   - The planned **joint positions** are converted to `movej()` commands
-   - `set_tcp()` is called once with the offset
-   - The robot executes `movej()` to each joint configuration → marker follows the planned Cartesian path at the desired angle
-
-**Example:** Drawing a straight line on the canvas
-
-1. **Perception** sends 100 stroke points (pixels)
-2. **Motion node** converts pixels → robot XYZ (e.g., `[0.240, -0.075, 0.11]` = first draw point)
-3. **Pose for MoveIt2** is constructed: position + quaternion for 20° tilt
-   ```python
-   pose.position = (0.240, -0.075, 0.11)  # xyz
-   pose.orientation = (0.9848, 0.0, -0.1736, 0.0)  # 20° tilt around Y
-   ```
-4. **MoveIt2** plans a Cartesian line → `[q1, q2, q3, q4, q5, q6]` (100 joint configs)
-5. **URScript** is built with 100 `movej()` commands
-6. **Robot** executes → marker draws a line at 20°, reaching down to the canvas
-
-### Why This Approach?
-
-- **Collision safety:** MoveIt2 knows about the table and marker holder shape, so it never plans paths that crash
-- **Correct tool orientation:** The quaternion in the pose ensures the 20° angle is maintained throughout
-- **Efficient execution:** URScript is lightweight and works on both simulator and real robot without UR driver infrastructure
-- **Hybrid:** Leverages MoveIt2's planning strengths while avoiding heavy action server dependencies
-
----
-
-## How to Run with MoveIt2
-
-### Launch MoveIt2 + Draw (with Collision Avoidance)
-
-**Simulator:**
-```bash
-# Build both packages (required after any code changes)
-export ROS_DOMAIN_ID=42
-source ~/perception/install/setup.bash
-source ~/RS2/ros2_ws/install/setup.bash
-cd ~/perception && colcon build --packages-select selfie_perception
-cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
-
-# Terminal 1 — Full integrated pipeline with MoveIt2 + Perception + Motion
-export ROS_DOMAIN_ID=42
-source ~/perception/install/setup.bash
-source ~/RS2/ros2_ws/install/setup.bash
-ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
-  image_source:=gui \
-  launch_rviz:=true
-
-# Terminal 2 — Start the GUI
-export ROS_DOMAIN_ID=42
-source ~/perception/install/setup.bash
-source ~/RS2/ros2_ws/install/setup.bash
-python3 ~/gui/selfie_drawing_gui_ros2.py
-
-# Terminal 3 (optional) — Start the UR3 simulator
-export ROS_DOMAIN_ID=42
-ros2 run ur_client_library start_ursim.sh -m ur3
-```
-
-**Real Robot:**
-```bash
-# Build both packages (required after any code changes)
-export ROS_DOMAIN_ID=42
-source ~/perception/install/setup.bash
-source ~/RS2/ros2_ws/install/setup.bash
-cd ~/perception && colcon build --packages-select selfie_perception
-cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
-
-# Terminal 1
-export ROS_DOMAIN_ID=42
-source ~/perception/install/setup.bash
-source ~/RS2/ros2_ws/install/setup.bash
-ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
-  image_source:=gui \
-  robot_ip:=192.168.0.195 \
-  launch_rviz:=true
-
-# Terminal 2 — GUI (same as simulator)
-export ROS_DOMAIN_ID=42
-source ~/perception/install/setup.bash
-source ~/RS2/ros2_ws/install/setup.bash
-python3 ~/gui/selfie_drawing_gui_ros2.py
-```
-
-### Launch MoveIt2 Only (for scene setup or debugging)
-
-```bash
-# Build the motion package
-source ~/RS2/ros2_ws/install/setup.bash
-cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
-
-# Launch
-export ROS_DOMAIN_ID=42
-source ~/RS2/ros2_ws/install/setup.bash
-ros2 launch ur3_motion_planning ur3_motion_planning_moveit2.launch.py \
-  robot_ip:=192.168.56.101 \
-  launch_rviz:=true
-```
-
-This starts:
-- `move_group` (MoveIt2 planning server)
-- `RViz` (3D visualization)
-- Scene setup node that publishes table + marker holder
-
-You can then:
-- Use RViz to visualize the table and marker holder
-- Test trajectories with the MoveIt2 GUI in RViz
-- Verify collision checking works
-
----
-
-## QA Checklist
-
-- [x] 3-way ROS 2 integration (GUI ↔ Perception ↔ Motion)
-- [x] 20° marker tilt with quaternion representation
-- [x] 15 cm EE height above canvas
-- [x] MoveIt2 `/compute_cartesian_path` planning
-- [x] Collision objects (table, marker holder attached to tool0)
-- [x] URScript generation from planned trajectories
-- [x] Real robot support (configurable IP)
-- [x] Perception-published strokes flow to motion node
-- [x] GUI status feedback from motion node
-- [x] **GUI colour selector (red/blue/green/black) → single-marker drawing via wrist_3 alignment**
-- [ ] Full end-to-end test on real robot for each of the 4 colours (pending team scheduling)

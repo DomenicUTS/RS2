@@ -625,14 +625,14 @@ if __name__ == "__main__":
     │   ├── strokes/
     │   └── verified/
     └── src/
-        └── ur3_selfie_draw.py (this file)
+        └── motion_planning_lib.py (this file)
     
     Workflow:
     1. Draw on https://editor.method.ac/
     2. Export as SVG → place in inputs/
     3. python3 src/svg_to_json_converter.py
        (creates JSON in outputs/strokes/)
-    4. python3 src/ur3_selfie_draw.py [face_num] [run_num]
+    4. python3 src/motion_planning_lib.py [face_num] [run_num]
     
     Arguments (optional):
     - face_num: 1, 2, or 3 (default: 3)
@@ -713,5 +713,5 @@ if __name__ == "__main__":
         print("\nTo create a JSON file from SVG:")
         print("  1. Place your SVG file in inputs/")
         print("  2. python3 src/svg_to_json_converter.py")
-        print("  3. python3 src/ur3_selfie_draw.py")
+        print("  3. python3 src/motion_planning_lib.py")
         print("="*60)

@@ -34,14 +34,11 @@ For cross-subsystem topic flow and run modes, see
 
 ---
 
-## ⚠️ Always set `ROS_DOMAIN_ID=42` (UTS lab)
+## Always set `ROS_DOMAIN_ID=42` (UTS lab)
 
 In the UTS lab every team's robot and laptop share the same network. By
 default, ROS 2 nodes from different machines find each other via
-multicast and end up talking to whoever happens to be online — which
-means another team's perception node can publish strokes to **our**
-motion node and crash a drawing mid-run, or our status updates can
-flood another team's GUI.
+multicast and end up talking.
 
 To prevent that, **every terminal** in this project must run:
 
@@ -49,12 +46,7 @@ To prevent that, **every terminal** in this project must run:
 export ROS_DOMAIN_ID=42
 ```
 
-…before any `ros2`, `colcon`, or `python3` command. The integrated
-launch file pins the same domain via
-`SetEnvironmentVariable('ROS_DOMAIN_ID', '42')`, but **external
-terminals (GUI, simulator, debugging)** do not inherit that — set it
-yourself. Without it, you will see strokes appear from nowhere, or your
-robot freeze waiting for a topic that another team is hogging.
+This is already included within the command blocks given in this ReadME and the full system integration. 
 
 ---
 
@@ -62,7 +54,7 @@ robot freeze waiting for a topic that another team is hogging.
 
 ```bash
 # Build (after any code change)
-export ROS_DOMAIN_ID=42                           # ← always first, see above
+export ROS_DOMAIN_ID=42        # see above 
 source /opt/ros/humble/setup.bash
 cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 source install/setup.bash
@@ -70,7 +62,7 @@ source install/setup.bash
 
 **Run the integrated pipeline** (perception + motion + MoveIt2):
 ```bash
-export ROS_DOMAIN_ID=42                           # ← always first
+export ROS_DOMAIN_ID=42         # ← always first
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
@@ -79,7 +71,7 @@ ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
 
 **Start the GUI** in a second terminal:
 ```bash
-export ROS_DOMAIN_ID=42                           # ← always first
+export ROS_DOMAIN_ID=42         # ← always first
 source ~/perception/install/setup.bash
 source ~/RS2/ros2_ws/install/setup.bash
 python3 ~/gui/selfie_drawing_gui_ros2.py
@@ -87,7 +79,7 @@ python3 ~/gui/selfie_drawing_gui_ros2.py
 
 For Polyscope, start the simulator first (also on the same domain):
 ```bash
-export ROS_DOMAIN_ID=42                           # ← always first
+export ROS_DOMAIN_ID=42        # ← always first
 ros2 run ur_client_library start_ursim.sh -m ur3
 ```
 
@@ -104,7 +96,7 @@ RS2/
 ├── outputs/strokes/face*.json      ← pre-baked strokes for offline runs
 ├── outputs/last_drawing.script     ← most recent generated URScript
 ├── src/
-│   ├── ur3_selfie_draw.py          ← stroke optimisation + URScript constants
+│   ├── motion_planning_lib.py          ← stroke optimisation + URScript constants (imported by the ROS node; also runs as a stripped-down standalone CLI for quick UR3 movement / stroke-reading tests, no colour selection)
 │   └── svg_to_json_converter.py    ← convert raw SVGs → stroke JSON
 └── ros2_ws/src/ur3_motion_planning/
     ├── launch/
@@ -112,7 +104,7 @@ RS2/
     │   └── ur3_motion_planning_moveit2.launch.py  ← motion only
     └── ur3_motion_planning/
         ├── ur3_drawing_node.py     ← ROS 2 node (planning + execution)
-        └── add_table_simple.py     ← publishes collision scene to MoveIt2
+        └── scene_publisher.py     ← publishes collision scene to MoveIt2
 ```
 
 ---
@@ -144,7 +136,7 @@ RS2/
 | `max_step` | `0.005` | Cartesian interpolation step (m) |
 | `jump_threshold` | `5.0` | MoveIt2 joint-jump filter |
 
-Calibration constants live in `src/ur3_selfie_draw.py`:
+Calibration constants live in `src/motion_planning_lib.py`:
 - `CANVAS_ORIGIN_ROBOT` — canvas top-left in robot base frame
 - `CANVAS_WIDTH_M`, `CANVAS_HEIGHT_M` — canvas size
 - `EE_DRAW_HEIGHT`, `MARKER_TILT_DEG` — marker holder geometry
@@ -159,11 +151,10 @@ Calibration constants live in `src/ur3_selfie_draw.py`:
 | Build fails | `source /opt/ros/humble/setup.bash` then rebuild |
 | `ConnectionRefusedError 192.168.56.101:30002` | Start the simulator: `ros2 run ur_client_library start_ursim.sh -m ur3` |
 | `move_group not available` | Wait ~25 s after launch — MoveIt2 takes a while to load |
-| Robot not moving on real UR3 | Set teach pendant to **Remote Control** mode |
+| Robot not moving on real UR3 | Set teach pendant to **Run Program** mode |
 | Wrong colour drawn | The mapping `colour → slot` is hard-coded in `COLOUR_TO_MARKER` in `ur3_drawing_node.py`. Either re-arrange the markers in the holder to match, or edit that dict. |
-| Robot draws with default marker regardless of GUI selection | Watch the motion-node log when you click Start. It should print four lines in order: `[GUI] >>> Received raw command: 'START:<colour>'`, `[GUI] Parsed command='START' payload='<colour>'`, `[GUI] ✓ Colour set to '<colour>'`, then `[Plan] >>> Pipeline reading colour: '<colour>'`. If any line is missing or shows the wrong colour, the chain is broken at that step. |
 | Pipeline never starts after Process | The motion node intentionally does **not** auto-start when perception strokes arrive — you must click **Start Drawing** in the GUI. Strokes are cached and used as soon as you press Start. |
-| Strokes off-canvas | Recalibrate `CANVAS_ORIGIN_ROBOT` in `src/ur3_selfie_draw.py` |
+| Strokes off-canvas | Recalibrate `CANVAS_ORIGIN_ROBOT` in `src/motion_planning_lib.py` |
 | Strokes appear out of nowhere / robot freezes / topics from another team | `ROS_DOMAIN_ID` is wrong. **Every terminal** must `export ROS_DOMAIN_ID=42` before running anything. Verify with `echo $ROS_DOMAIN_ID`. |
 
 ---

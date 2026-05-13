@@ -21,9 +21,8 @@
    - 6.2 [Perception Subsystem](#62-perception-subsystem)
    - 6.3 [Motion Planning Subsystem](#63-motion-planning-subsystem)
 7. [Configuration & Calibration](#7-configuration--calibration)
-8. [Known Limitations & Assumptions](#8-known-limitations--assumptions)
-9. [Troubleshooting & FAQs](#9-troubleshooting--faqs)
-10. [Project Layout](#10-project-layout)
+8. [Troubleshooting & FAQs](#9-troubleshooting--faqs)
+9. [Project Layout](#10-project-layout)
 
 ---
 
@@ -176,24 +175,18 @@ colcon build --packages-select <pkg>
 
 The full integrated system runs in 2–3 terminals.
 
-> ### ⚠️ Lab network safety: always `export ROS_DOMAIN_ID=42`
+> ### Lab network safety: always `export ROS_DOMAIN_ID=42`
 >
 > The UTS lab puts every team's laptop and robot on the **same network**.
 > Without a unique ROS 2 domain, our nodes pick up other teams' topics
-> (and they pick up ours) — strokes from another group can arrive on
-> `/drawing_strokes`, our `/gui/command START` can fire someone else's
-> robot, and we lose runs to cross-talk. We use **`ROS_DOMAIN_ID=42`**
+> (and they pick up ours). We use **`ROS_DOMAIN_ID=42`**
 > as Team Picasso's reserved domain.
 >
 > **Every terminal listed below must begin with:**
 > ```bash
 > export ROS_DOMAIN_ID=42
 > ```
-> The integrated launch file pins the domain internally via
-> `SetEnvironmentVariable('ROS_DOMAIN_ID', '42')`, but external terminals
-> (GUI, simulator, `ros2 topic echo`, `colcon build`) do not inherit
-> that — set it yourself. Verify with `echo $ROS_DOMAIN_ID` (must print
-> `42`).
+
 
 ### Terminal 1 — Backend (MoveIt2 + Perception + Motion)
 
@@ -207,7 +200,7 @@ source ~/RS2/ros2_ws/install/setup.bash
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   image_source:=gui \
   launch_rviz:=true \
-  robot_ip:=192.168.56.101
+  robot_ip:=192.168.56.101 # or change to the ip in the link provided by polyscope in terminal 3
 
 # Or for the real UR3 (replace with your robot's IP):
 ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
@@ -216,8 +209,8 @@ ros2 launch ur3_motion_planning integrated_pipeline.launch.py \
   robot_ip:=192.168.0.195
 ```
 
-Wait ~25 s for MoveIt2 to finish loading. Look for the line
-`[Scene] Marker holder attached to tool0`.
+Wait ~25 s for MoveIt2 to finish loading, evident when the table loads into the scene or look for the line
+`[Scene] Marker holder attached to tool0` in the terminal 1. 
 
 ### Terminal 2 — GUI
 
@@ -238,7 +231,7 @@ ros2 run ur_client_library start_ursim.sh -m ur3
 ```
 
 Wait ~30 s for the Docker container to come up. Visit
-`http://192.168.56.101:6080/vnc.html` to view the simulator.
+`http://192.168.56.101:6080/vnc.html` (or the output the terminal provides) to view the simulator.
 
 ### Expected outcome
 
@@ -254,13 +247,12 @@ Wait ~30 s for the Docker container to come up. Visit
 > start drawing the moment perception strokes arrive on
 > `/drawing_strokes`. Strokes are cached and the pipeline only fires
 > when the user clicks Start Drawing (which sends `START:<colour>`).
-> This makes the colour selection authoritative — the previous
-> auto-start behaviour caused every drawing to come out in the default
-> colour because the pipeline would fire before the GUI Start click.
+> This makes the colour selection authoritative.
 
 ---
 
 ## 6. Subsystem Reference
+The next three sub-sections describe each subsystem in detail.
 
 ### 6.1 GUI Subsystem
 
@@ -366,10 +358,6 @@ List[List[[x,y]]]  →  /drawing_strokes (JSON)
 **How to run independently:**
 
 ```bash
-# Standalone CLI (no ROS — domain not relevant):
-cd ~/perception/src/selfie_perception
-PYTHONPATH=.:$PYTHONPATH python3 selfie_perception/pipeline.py ../../input/your_selfie.png
-
 # ROS 2 (loads from ~/perception/input/):
 export ROS_DOMAIN_ID=42                          # ← always first
 source ~/perception/install/setup.bash
@@ -389,7 +377,7 @@ ros2 launch selfie_perception perception_pipeline.launch.py
 
 **Known limitations & assumptions:**
 - rembg only segments **human** subjects well (model: `u2net_human_seg`). Drawings of pets/objects will need a different model.
-- Output is fixed to **400 × 300 pixels**; this contract is shared with the motion subsystem and changing it requires updating `CANVAS_PX_W/H` in `~/RS2/src/ur3_selfie_draw.py` too.
+- Output is fixed to **400 × 300 pixels**; this contract is shared with the motion subsystem and changing it requires updating `CANVAS_PX_W/H` in `~/RS2/src/motion_planning_lib.py` too.
 
 ---
 
@@ -404,43 +392,39 @@ Cartesian paths with MoveIt2, rotate the wrist to the chosen marker,
 and execute on the UR3 via URScript.
 
 **Pipeline:**
+```
+inputs/*.svg ──[svg_to_json_converter.py]──► outputs/strokes/*.json
+                                                       │
+                                                       │
+                                                       │
+            (perception_node, external pkg)            │ (file mode)
+                  │                                    │
+                  └────────── /drawing_strokes ────────┤
+                                                       │
+                                                       ▼
+GUI ── /gui/command (START:<colour>) ─────► ur3_drawing_node.py ◄── imports ── motion_planning_lib.py
+                                              │      │                          (constants + algorithms)
+                       scene_publisher.py ────┘      │
+                       (table + holder via           │
+                        /apply_planning_scene)       │
+                                                     │
+                                         MoveIt2 ────┤ (collision-aware plans)
+                                                     │
+                                                     ▼
+                                       outputs/last_drawing.script
+                                                     │
+                                             TCP socket :30002
+                                                     ▼
+                                             UR3 / Polyscope
+```
 
-```
-Strokes JSON (from /drawing_strokes; cached, NOT auto-started)
-Colour     (parsed from "START:<colour>" on /gui/command)
-   │
-   ▼  GUI clicks "Start Drawing" → publishes START:<colour>
-   ▼  _on_gui_command parses colour, sets _selected_colour, spawns thread
-   │
-   ▼  Scale to 95 % of canvas
-   ▼  Nearest-Neighbour TSP + 2-Opt (~30 % travel saved)
-Optimised stroke list
-   │
-   ▼  marker_idx     = COLOUR_TO_MARKER[colour]
-   ▼  wrist_3_offset = marker_idx × -90°
-   ▼  PLAN every stroke with TOOL_QUAT (marker 1's orientation)
-   │  (deterministic — same plan regardless of colour)
-   │
-   ▼  For each stroke:
-   │     For travel + draw + lift:
-   │        /compute_cartesian_path service (MoveIt2)  ←  COLLISION-AWARE
-Joint trajectories (planned for marker 1)
-   │
-   ▼  POST-PROCESS: add wrist_3_offset to every waypoint's 6th joint
-   ▼  PREPEND a movej rotating only wrist_3 from HOME → HOME+offset
-   │  (visible "swap to colour" before any horizontal motion)
-   │
-   ▼  Convert to movej commands → URScript program
-   ▼  TCP socket → UR3 (port 30002)
-Robot draws (single colour, wrist physically rotated to that slot)
-```
 
 **Nodes:**
 
 | Node | Purpose |
 |------|---------|
 | `motion_planning_node` (alias of `ur3_drawing_node.py`) | Main orchestrator |
-| `add_table` (alias of `add_table_simple.py`) | Publishes `table` and `marker_holder` collision objects to MoveIt2 via `/apply_planning_scene` |
+| `scene_publisher` (alias of `scene_publisher.py`) | Publishes `table` and `marker_holder` collision objects to MoveIt2 via `/apply_planning_scene` |
 
 **Subscribes:**
 
@@ -460,6 +444,16 @@ Robot draws (single colour, wrist physically rotated to that slot)
 
 **Saved file:**
 - `~/RS2/outputs/last_drawing.script` — the last URScript program sent to the robot. Useful for inspection and offline replay.
+
+**Note on `motion_planning_lib.py` as a standalone CLI.** Its main
+role is the shared constants + algorithms the ROS node imports (kept
+in sync automatically). It also still runs standalone via
+`python3 src/motion_planning_lib.py <face_num> <run_num>`, but that
+path hasn't tracked recent features — no colour selection (always
+draws with the slot-0° marker), and it emits `movel` instead of
+MoveIt2-planned `movej`, so no collision-aware planning. Treat it as
+a quick smoke test for stroke parsing, optimisation, and basic UR3
+execution; use the ROS node for the real integrated workflow.
 
 **How to run independently:**
 
@@ -495,13 +489,6 @@ A separate "rotate-only" `movej` is prepended to the URScript so the
 wrist visibly swaps to the chosen marker before any horizontal motion
 toward the canvas.
 
-Why post-process the wrist rather than ask MoveIt2 for the rotated
-orientation directly: with 6 DOF the same end-effector orientation is
-reachable through several IK branches, and MoveIt2 was repeatedly
-"absorbing" the requested 90° tool-Z rotation into wrist_1 / wrist_2 /
-a wrist-flip, leaving wrist_3 essentially unchanged regardless of
-colour. The post-processing approach sidesteps the IK ambiguity
-entirely.
 
 Default mapping (edit `COLOUR_TO_MARKER` in `ur3_drawing_node.py` to
 match your physical loading order):
@@ -526,7 +513,7 @@ match your physical loading order):
 | `jump_threshold` | `5.0` | MoveIt2 joint-space jump filter |
 | `planning_timeout` | `30.0` | Per-stroke planning timeout (s) |
 
-**Calibration constants (in `~/RS2/src/ur3_selfie_draw.py`):**
+**Calibration constants (in `~/RS2/src/motion_planning_lib.py`):**
 
 | Constant | Default | Description |
 |----------|---------|-------------|
@@ -537,12 +524,11 @@ match your physical loading order):
 | `JOINT_VEL`, `LINEAR_VEL`, etc. | mid-speed | URScript motion params |
 
 **Known limitations & assumptions:**
-- The colour-to-slot mapping (`COLOUR_TO_MARKER`) is hard-coded. Either physically load the markers to match the default mapping, or edit the dict to reflect your loading order.
+- The colour-to-slot mapping (`COLOUR_TO_MARKER`) is hard-coded.
 - Only one colour per drawing — the original "cycle through 4 markers per stroke" mode has been replaced.
-- The holder's collision geometry is approximated as a single 160 × 180 mm box. This is conservative for any single marker but does not exactly match the 4-radial-arms shape.
+- The holder's collision geometry is approximated as a single 160 × 180 mm box.
 - URScript only contains `movej` commands (joint-space moves). MoveIt2 plans Cartesian paths and we feed the resulting joint waypoints directly. `set_tcp()` is set as a courtesy but does not affect `movej` motion.
-- Collision avoidance is enforced **at planning time**. URScript execution itself is open-loop; if the robot is moved by hand mid-execution, no replanning happens.
-
+- Collision avoidance is enforced **at planning time**. URScript execution itself is open-loop. 
 ---
 
 ## 7. Configuration & Calibration
@@ -550,7 +536,7 @@ match your physical loading order):
 ### Canvas calibration (most common change)
 
 If the canvas position or size differs from the default, edit
-`~/RS2/src/ur3_selfie_draw.py` lines ~36–38:
+`~/RS2/src/motion_planning_lib.py` lines ~36–38:
 
 ```python
 CANVAS_ORIGIN_ROBOT = np.array([0.185, 0.170, 0.010])  # m, robot base frame
@@ -570,7 +556,7 @@ cd ~/RS2/ros2_ws && colcon build --packages-select ur3_motion_planning
 
 ### Motion speeds
 
-Three predefined levels in `ur3_selfie_draw.py`:
+Three predefined levels in `motion_planning_lib.py`:
 - **Conservative** (real robot first runs): `(0.73, 0.80, 0.47, 0.10)`
 - **Mid** (current default): `(0.97, 1.10, 0.64, 0.15)`
 - **Maximum** (simulator only): `(1.20, 1.40, 0.80, 0.20)`
@@ -582,36 +568,13 @@ Tuple is `(JOINT_ACCEL, JOINT_VEL, LINEAR_ACCEL, LINEAR_VEL)`.
 Edit `EE_DRAW_HEIGHT` (length from flange to marker tip along the
 tilted axis) and `MARKER_TILT_DEG` if you 3D-print a different holder.
 The collision-object dimensions are also defined in
-`add_table_simple.py` and `ur3_drawing_node.py::_publish_scene_objects`
+`scene_publisher.py` and `ur3_drawing_node.py::_publish_scene_objects`
 — update them together.
 
 ---
 
-## 8. Known Limitations & Assumptions
 
-1. **Rotationally-symmetric holder required.** The 4-marker cycling
-   relies on the holder being rotationally symmetric so every marker
-   tip lands at the same world position. A non-symmetric holder would
-   need per-marker `set_tcp()` updates and a per-marker
-   `CANVAS_ORIGIN_ROBOT`.
-2. **400 × 300 px canvas contract.** This is hard-coded across all
-   three subsystems. Changing it requires synchronised edits to
-   `stroke_extraction.py` (perception) and `ur3_selfie_draw.py`
-   (motion).
-3. **rembg = humans only.** Subjects without a clear human silhouette
-   will not segment well.
-4. **Single-shot pipeline.** The motion node assumes one stroke set
-   per drawing. Re-capturing in the GUI will trigger a new run, but
-   only after the previous one reaches `COMPLETE` or `ERROR`.
-5. **Open-loop URScript execution.** No mid-stroke replanning if the
-   environment changes.
-6. **No tool-changer.** Markers are physically swapped only via
-   wrist_3 rotation between strokes. The colour order is determined by
-   how you load the holder.
-
----
-
-## 9. Troubleshooting & FAQs
+## 8. Troubleshooting & FAQs
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
@@ -619,36 +582,22 @@ The collision-object dimensions are also defined in
 | GUI never receives the perception preview / motion never receives strokes | Same domain mismatch as above — usually one terminal is missing `export ROS_DOMAIN_ID=42`. The integrated launch file sets the domain *only inside its own process tree*; external terminals must set it manually. |
 | Build fails with “colcon: command not found” | Source ROS 2: `source /opt/ros/humble/setup.bash` |
 | `move_group` not available; `/compute_cartesian_path` unavailable | MoveIt2 still loading. Wait ≥ 25 s after launching. The launch file already includes a `TimerAction` delay for the scene + motion nodes, but the GUI / external triggers may need to wait too. |
-| `ConnectionRefusedError 192.168.56.101:30002` | Polyscope simulator isn't running. Start it: `ros2 run ur_client_library start_ursim.sh -m ur3`. |
-| Robot is connected but does nothing | Real UR3: pendant must be in **Remote Control** mode (Settings → System → Remote Control). |
+| `ConnectionRefusedError 192.168.56.101:30002` | You are trying to run the simulated version and Polyscope simulator isn't running. Start it: `ros2 run ur_client_library start_ursim.sh -m ur3`. |
+| Robot is connected but does nothing | Real UR3: pendant must be in **Run Program** mode |
 | Robot makes a protective stop on first move | Reduce motion params to **Conservative** (see §7). Verify `CANVAS_ORIGIN_ROBOT` is reachable. |
 | Strokes are drawn off the canvas | Recalibrate `CANVAS_ORIGIN_ROBOT` (see §7). |
 | Robot drew with the wrong colour | The mapping `colour name → holder slot` is in `COLOUR_TO_MARKER` in `ur3_drawing_node.py`. Either re-load the markers in the slot order matching the dict, or edit the dict to match your physical loading. |
-| Robot drew in the default colour regardless of GUI selection | Watch the motion-node log when you click Start. You should see four lines in order: `[GUI] >>> Received raw command: 'START:<colour>'`, `[GUI] Parsed command='START' payload='<colour>'`, `[GUI] ✓ Colour set to '<colour>'`, then `[Plan] >>> Pipeline reading colour: '<colour>'`. If any line is missing or shows the wrong colour, the chain is broken at that step. (Common cause: `ROS_DOMAIN_ID` mismatch between the GUI terminal and the motion-node terminal — see §5.) |
 | Pipeline never starts after Process | The motion node intentionally does **not** auto-start when perception strokes arrive. Click **Start Drawing** in the GUI; strokes are cached and used as soon as you press it. |
 | GUI doesn't see the perception preview | Confirm `ROS_DOMAIN_ID=42` is set in the GUI terminal *and* the launch file does `SetEnvironmentVariable('ROS_DOMAIN_ID', '42')`. Both must match. |
 | GUI camera shows "Disconnected" | Camera index conflict; close other apps using the webcam, or change `CameraHandler(camera_index=1)`. |
 | `rembg` slow on first run | Model download (~170 MB). Subsequent runs are fast (~2–4 s on CPU). |
 | Phantom robot in RViz | Only one source should publish `/joint_states`. The motion node does this — make sure no `joint_state_publisher` is launched separately. |
-| RViz shows red collision flash | A planned waypoint touches the table or holder. Check `add_table` ran successfully (look for `Table collision object applied`). |
+| RViz shows red collision flash | A planned waypoint touches the table or holder. Check `scene_publisher` ran successfully (look for `Table collision object applied`). |
 | `/compute_cartesian_path fraction < 0.5` | Travel pose unreachable. Verify the canvas calibration; reduce `max_step` (smaller steps allow MoveIt2 more flexibility). |
-
-**FAQ — How do I change the colour cycle order?**
-Re-order the markers in the physical holder. The code always uses
-`stroke_index % 4`, mapping strokes to slots in slot-index order.
-
-**FAQ — How do I draw with a single colour?**
-Either load the same colour into all four slots, or short-circuit the
-multi-marker code: in `ur3_drawing_node.py::_plan_and_build_urscript`,
-hard-code `marker_idx = 0` for every stroke.
-
-**FAQ — Where is the last URScript saved?**
-`~/RS2/outputs/last_drawing.script`. You can replay it manually via
-the simulator/robot (`socket.connect((ip, 30002)); sock.send(script)`).
 
 ---
 
-## 10. Project Layout
+## 9. Project Layout
 
 ```
 ~/RS2/                                       ← Motion planning + integration docs
@@ -661,7 +610,7 @@ the simulator/robot (`socket.connect((ip, 30002)); sock.send(script)`).
 │   ├── verified/face*.svg
 │   └── last_drawing.script
 ├── src/
-│   ├── ur3_selfie_draw.py
+│   ├── motion_planning_lib.py
 │   └── svg_to_json_converter.py
 └── ros2_ws/src/ur3_motion_planning/
     ├── launch/
@@ -669,7 +618,7 @@ the simulator/robot (`socket.connect((ip, 30002)); sock.send(script)`).
     │   └── ur3_motion_planning_moveit2.launch.py
     └── ur3_motion_planning/
         ├── ur3_drawing_node.py
-        └── add_table_simple.py
+        └── scene_publisher.py
 
 ~/perception/                                ← Perception subsystem
 ├── README.md
