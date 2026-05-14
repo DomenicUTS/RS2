@@ -201,6 +201,11 @@ JOINT_NAMES = [
 # Safe start/end pose. wrist_3_offset is applied relative to HOME_JOINTS[5].
 HOME_JOINTS = [1.047, -1.57, 1.57, -1.57, -1.57, 0.0]  # shoulder_pan 60° toward canvas
 
+# Pen-down drawing speed. Kept separate from JOINT_VEL/ACCEL so travel moves
+# can be quick while marker contact stays smooth and controlled.
+DRAW_JOINT_ACCEL = 1.10
+DRAW_JOINT_VEL = 0.70
+
 
 class UR3DrawingNode(Node):
     """
@@ -797,7 +802,7 @@ class UR3DrawingNode(Node):
     def _build_urscript(self, segments) -> str:
         """Serialise joint waypoints to a URScript program.
         Travel/lift movejs use JOINT_VEL/ACCEL.
-        Draw movejs use slower a=0.5/v=0.3 with a small blend radius
+        Draw movejs use slower DRAW_JOINT_* values with a small blend radius
         (r=0.002) for smooth lines — but the LAST draw point of a stroke
         has no blend so the robot stops cleanly before lifting."""
         lines = []
@@ -823,9 +828,9 @@ class UR3DrawingNode(Node):
                 # Last draw point = next segment is travel/lift (or this is the end).
                 is_last_draw = (idx + 1 >= len(segments) or segments[idx + 1][1])
                 if is_last_draw:
-                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3)")
+                    lines.append(f"  movej([{j_str}], a={DRAW_JOINT_ACCEL}, v={DRAW_JOINT_VEL})")
                 else:
-                    lines.append(f"  movej([{j_str}], a=0.5, v=0.3, r=0.002)")
+                    lines.append(f"  movej([{j_str}], a={DRAW_JOINT_ACCEL}, v={DRAW_JOINT_VEL}, r=0.002)")
 
         lines.append("")
         # Return to HOME — also undoes the wrist_3 colour offset.
