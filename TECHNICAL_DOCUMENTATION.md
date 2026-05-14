@@ -20,6 +20,7 @@
    - 6.1 [GUI Subsystem](#61-gui-subsystem)
    - 6.2 [Perception Subsystem](#62-perception-subsystem)
    - 6.3 [Motion Planning Subsystem](#63-motion-planning-subsystem)
+   - 6.4 [UR3 End-Effector / Marker Holder Subsystem](#64-ur3-end-effector--marker-holder-subsystem)
 7. [Configuration & Calibration](#7-configuration--calibration)
 8. [Troubleshooting & FAQs](#9-troubleshooting--faqs)
 9. [Project Layout](#10-project-layout)
@@ -46,7 +47,7 @@ robot or a Polyscope simulator.
 
 | # | Subsystem | Repository | Owner | Responsibility |
 |---|-----------|-----------|-------|----------------|
-| 1 | **GUI** | `~/gui/` | Mateusz | Webcam capture, drawing preview, START/STOP buttons, status feedback |
+| 1 | **GUI + End-Effector** | `~/gui/` + 3D printed hardware | Mateusz | Webcam capture, drawing preview, START/STOP buttons, status feedback, marker holder design, compliant marker contact |
 | 2 | **Perception** | `~/perception/` | Nithish | Background removal → edge detection → stroke extraction |
 | 3 | **Motion Planning** | `~/RS2/` | Domenic | Stroke optimisation → MoveIt2 planning → URScript execution, **4-colour marker cycling** |
 
@@ -112,12 +113,11 @@ Tested and confirmed working on:
 
 ### 4.1 Hardware Setup
 
-1. **Mount the UR3** on the rigid table; tighten the base bolts.
-2. **Bolt the 3D-printed marker holder** to the UR3 tool flange. Confirm the holder is centred on the flange and that the four marker slots are oriented at 0°, 90°, 180°, 270° around the wrist axis.
-3. **Insert the four markers** in this order to match the default colour mapping in the code: slot 0° = **red**, slot 90° = **blue**, slot 180° = **green**, slot 270° = **black**. If you want a different physical loading order, edit `COLOUR_TO_MARKER` in [`ur3_drawing_node.py`](ros2_ws/src/ur3_motion_planning/ur3_motion_planning/ur3_drawing_node.py).
-4. **Place the canvas** flat on the table, ~200 × 150 mm of usable area, top-left corner ≈ `(x=0.185, y=0.170, z=0.010)` m in the robot base frame (this is the calibrated default; recalibrate if your table differs).
-5. **Connect the Ethernet** cable between the host laptop and the UR3.
-6. **Connect the webcam** (USB or built-in) to the host.
+1. **Bolt the 3D-printed marker holder** to the UR3 tool flange. Confirm the holder is centred on the flange and that the four marker slots are oriented at 0°, 90°, 180°, 270° around the wrist axis.
+2. **Insert the four markers** in this order to match the default colour mapping in the code: slot 0° = **red**, slot 90° = **blue**, slot 180° = **green**, slot 270° = **black**. If you want a different physical loading order, edit `COLOUR_TO_MARKER` in [`ur3_drawing_node.py`](ros2_ws/src/ur3_motion_planning/ur3_motion_planning/ur3_drawing_node.py).
+3. **Place the canvas** flat on the table, ~200 × 150 mm of usable area, top-left corner ≈ `(x=0.185, y=0.170, z=0.010)` m in the robot base frame (this is the calibrated default; recalibrate if your table differs).
+4. **Connect the Ethernet** cable between the host laptop and the UR3.
+5. **Connect the webcam** (USB or built-in) to the host.
 
 ### 4.2 Software Setup
 
@@ -418,6 +418,26 @@ GUI ── /gui/command (START:<colour>) ─────► ur3_drawing_node.py 
                                              UR3 / Polyscope
 ```
 
+**How strokes become URScript (per-stroke, not all-at-once).** The node
+never hands MoveIt2 the whole drawing in one call. For each stroke it
+makes **three separate `/compute_cartesian_path` calls**, *travel*
+(one waypoint above the start, pen-up), *draw* (every stroke point at
+`Z_DRAW`, pen-down), *lift* (one waypoint above the end). Each call
+gets the previous call's final joint state as its start state, so the
+trajectories stitch together seamlessly into one continuous motion.
+Splitting it three ways isolates the pen-up vs pen-down regions
+(different Z heights, different thinning rules) and lets a single
+failed stroke be skipped instead of killing the whole drawing.
+
+After each call returns, `_thin_trajectory` reduces the trajectory:
+for travel/lift it keeps **only the endpoint** (pen is in the air, no
+need for intermediate joint configs. For
+the draw call it keeps **every point** MoveIt2 produced (so the
+robot's `movej` chain follows the exact Cartesian path instead of
+joint-space-shortcutting through the canvas). The thinned segments
+are concatenated, the wrist_3 offset is applied, and the result is
+serialised to a single URScript program.
+
 
 **Nodes:**
 
@@ -530,6 +550,31 @@ match your physical loading order):
 - URScript only contains `movej` commands (joint-space moves). MoveIt2 plans Cartesian paths and we feed the resulting joint waypoints directly. `set_tcp()` is set as a courtesy but does not affect `movej` motion.
 - Collision avoidance is enforced **at planning time**. URScript execution itself is open-loop. 
 ---
+
+### 6.4 UR3 End-Effector / Marker Holder Subsystem
+<img src="images/IMG_7969.jpg" alt="UR3 marker holder" align="right" width="400">
+
+**Owner:** Mateusz
+
+
+
+**Purpose:** The end-effector allows the UR3 to draw using one of four physical markers mounted around the wrist axis. The selected colour from the GUI is mapped to a marker slot, and the robot rotates `wrist_3` to align the chosen marker with the canvas.
+
+The attachment was designed and 3D printed to bolt directly onto the UR3 tool flange using M6 bolts. It holds four markers at fixed angular positions and includes a compliant mechanism near the marker interface. This compliance helps maintain consistent marker contact with the drawing surface while reducing excessive force on the marker tip, the paper, and the robot during small height variations or calibration error.
+
+
+
+**Design requirements:**
+- Securely hold four standard drawing markers.
+- Allow repeatable marker positioning for colour selection.
+- Maintain a consistent drawing angle and contact point.
+- Provide slight mechanical compliance during contact with the canvas.
+- Avoid collisions with the table, canvas, and robot wrist during drawing.
+
+**Known limitations:**
+- Marker colour order must match the software mapping.
+- The compliant mechanism is designed for max 20mm deflections only.
+
 
 ## 7. Configuration & Calibration
 

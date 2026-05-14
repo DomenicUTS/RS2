@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-UR3 Motion Planning Node - MoveIt2 Cartesian Path Planning + URScript Execution
+UR3 Motion Planning Node — central orchestrator.
 
-Pipeline:
-  1. Load strokes (file or /drawing_strokes topic)
-  2. Optimize path ordering (Nearest-Neighbour + 2-Opt)
-  3. Convert pixel strokes → Cartesian waypoints (with correct TCP orientation)
-  4. Plan collision-safe trajectory via MoveIt2 /compute_cartesian_path service
-  5. Convert MoveIt2 joint trajectory → URScript and execute on robot
+Flow: GUI → perception strokes → MoveIt2 plan → URScript over TCP to UR3.
 
-Parameters:
-  - robot_ip: IP address of UR3 (default: 192.168.56.101)
-  - robot_port: URScript port (default: 30002)
-  - face: Which face to draw (default: face1)
-  - stroke_source: 'file' or 'topic'
-  - enable_optimization: Enable path optimization (default: true)
+Topics:
+  Sub  /drawing_strokes    ← perception (cached, no auto-start)
+  Sub  /gui/command        ← GUI ("START:<colour>", PAUSE, RESUME, STOP)
+  Sub  /gui/marker_colour  ← GUI (supplementary)
+  Pub  /drawing_status     → GUI
+  Pub  /joint_states       → RViz / MoveIt2
+  Pub  /trajectory_preview → RViz
+
+Params: robot_ip, robot_port, face, stroke_source ('file'|'topic'),
+        enable_optimization, max_step, jump_threshold, planning_timeout.
 """
 
 import rclpy
@@ -46,7 +45,8 @@ import sys
 import socket
 from typing import List, Tuple
 
-# Import drawing constants and optimisation from motion_planning_lib
+# Shared library (~/RS2/src/motion_planning_lib.py): calibration constants
+# + optimisation algorithms. Lives outside this ROS package, hence sys.path.
 try:
     sys.path.insert(0, os.path.expanduser("~/RS2/src"))
     from motion_planning_lib import (
@@ -80,10 +80,14 @@ except ImportError as e:
     print(f"[Warning] Could not import motion_planning_lib: {e}")
     IMPORTS_OK = False
 
-# ── Quaternion for the tilted tool orientation ──
-# Precomputed from Ry(tilt) @ Rx(π)  →  quaternion (x, y, z, w)
+# Convert the URScript-style rotation vector (from motion_planning_lib)
+# into a quaternion (what MoveIt2 wants). Called once at module load.
 def _rotvec_to_quaternion(rv: List[float]) -> Tuple[float, float, float, float]:
-    """Rotation-vector → quaternion (x, y, z, w)."""
+    """Rotation-vector → quaternion (x, y, z, w).
+
+    Rodrigues' formula → rotation matrix, then standard trace-based
+    extraction. The if/elif picks the numerically stable branch.
+    """
     a = np.array(rv, dtype=float)
     angle = float(np.linalg.norm(a))
     if angle < 1e-10:
@@ -121,10 +125,12 @@ def _rotvec_to_quaternion(rv: List[float]) -> Tuple[float, float, float, float]:
     nm = math.sqrt(x * x + y * y + z * z + w * w)
     return (x / nm, y / nm, z / nm, w / nm)
 
+# Baseline tool orientation for marker 1 (slot 0°, tilted 20° at canvas).
+# Other colours derive from this via marker_tool_quat().
 if IMPORTS_OK:
     TOOL_QUAT = _rotvec_to_quaternion(TOOL_ORIENT)  # (x, y, z, w)
 else:
-    TOOL_QUAT = (0.984808, 0.0, -0.173648, 0.0)  # fallback
+    TOOL_QUAT = (0.984808, 0.0, -0.173648, 0.0)  # fallback if lib import failed
 
 # ── Multi-marker holder ──
 # Custom 3D-printed holder carries 4 markers at 0°, 90°, 180°, 270° around the
@@ -149,7 +155,7 @@ DEFAULT_COLOUR = "black"
 
 
 def _quat_mul(q1, q2):
-    """Hamilton product (x, y, z, w) * (x, y, z, w)."""
+    """Hamilton product (quaternion multiplication — NOT element-wise)."""
     x1, y1, z1, w1 = q1
     x2, y2, z2, w2 = q2
     return (
@@ -161,15 +167,17 @@ def _quat_mul(q1, q2):
 
 
 def marker_tool_quat(marker_idx: int):
-    """Return TOOL_QUAT rotated about its own Z-axis to activate marker N."""
+    """Tool orientation for marker N: TOOL_QUAT rotated -N·90° around tool Z."""
     angle = MARKER_STEP_RAD * (marker_idx % MARKER_COUNT)
     qz = (0.0, 0.0, math.sin(angle / 2.0), math.cos(angle / 2.0))
     return _quat_mul(TOOL_QUAT, qz)
 
 
-# MoveIt2 planning group
+# MoveIt2 planning targets — must match the UR MoveIt2 config.
 PLANNING_GROUP = "ur_manipulator"
 EE_LINK = "tool0"
+
+# Joint order must match the URDF.
 JOINT_NAMES = [
     "shoulder_pan_joint",
     "shoulder_lift_joint",
@@ -178,7 +186,9 @@ JOINT_NAMES = [
     "wrist_2_joint",
     "wrist_3_joint",
 ]
-HOME_JOINTS = [1.047, -1.57, 1.57, -1.57, -1.57, 0.0]  # shoulder_pan rotated 60° to face canvas
+
+# Safe start/end pose. wrist_3_offset is applied relative to HOME_JOINTS[5].
+HOME_JOINTS = [1.047, -1.57, 1.57, -1.57, -1.57, 0.0]  # shoulder_pan 60° toward canvas
 
 
 class UR3DrawingNode(Node):
@@ -190,14 +200,14 @@ class UR3DrawingNode(Node):
         super().__init__("ur3_drawing_node")
 
         # ── Parameters ──
-        self.declare_parameter("robot_ip", "192.168.56.101")
-        self.declare_parameter("robot_port", 30002)
+        self.declare_parameter("robot_ip", "192.168.56.101")  # Polyscope sim default
+        self.declare_parameter("robot_port", 30002)           # URScript port
         self.declare_parameter("enable_optimization", True)
-        self.declare_parameter("face", "face1")
-        self.declare_parameter("stroke_source", "file")
-        self.declare_parameter("max_step", 0.005)          # Cartesian interpolation step (m)
-        self.declare_parameter("jump_threshold", 5.0)       # joint-space jump filter
-        self.declare_parameter("planning_timeout", 30.0)    # seconds
+        self.declare_parameter("face", "face1")               # file mode only
+        self.declare_parameter("stroke_source", "file")       # 'file' or 'topic'
+        self.declare_parameter("max_step", 0.005)             # MoveIt2 step (m)
+        self.declare_parameter("jump_threshold", 5.0)
+        self.declare_parameter("planning_timeout", 30.0)
 
         self.robot_ip = self.get_parameter("robot_ip").value
         self.robot_port = self.get_parameter("robot_port").value
@@ -209,21 +219,21 @@ class UR3DrawingNode(Node):
         self.planning_timeout = self.get_parameter("planning_timeout").value
 
         # ── State ──
-        self._startup_done = False
-        self._topic_strokes = None
+        self._startup_done = False           # re-entry guard for the pipeline
+        self._topic_strokes = None           # last strokes from perception
         self._metrics = Metrics() if IMPORTS_OK else None
         self._pipeline_thread = None
-        self._current_joints = list(HOME_JOINTS)  # track planned joint state
-        # Selected colour from the GUI (defaults so file-mode and no-GUI
-        # runs still work). Updated by /gui/marker_colour subscriber.
-        self._selected_colour = DEFAULT_COLOUR
+        self._current_joints = list(HOME_JOINTS)  # for /joint_states pub
+        self._selected_colour = DEFAULT_COLOUR    # set by START:<colour>
 
-        # ── Callback groups ──
+        # Reentrant group so MoveIt2 service calls don't block subscribers.
         self._service_cb_group = ReentrantCallbackGroup()
 
-        # ── Publishers / Subscribers ──
+        # Publishers
         self.status_pub = self.create_publisher(String, "drawing_status", 10)
         self.trajectory_display_pub = self.create_publisher(PoseArray, "trajectory_preview", 10)
+
+        # Subscribers
         self.strokes_sub = self.create_subscription(
             String, "drawing_strokes", self._on_drawing_strokes, 10)
         self.gui_cmd_sub = self.create_subscription(
@@ -231,18 +241,16 @@ class UR3DrawingNode(Node):
         self.gui_colour_sub = self.create_subscription(
             String, "gui/marker_colour", self._on_gui_colour, 10)
 
-        # ── Joint state publisher (replaces joint_state_publisher node) ──
-        # Publishes the current planned joint positions so MoveIt2 and RViz
-        # show a single, consistent robot model (eliminates phantom robot).
+        # /joint_states @ 10 Hz so RViz/MoveIt2 don't show a phantom robot.
         self.joint_state_pub = self.create_publisher(JointState, "joint_states", 10)
-        self._js_timer = self.create_timer(0.1, self._publish_joint_states)  # 10 Hz
+        self._js_timer = self.create_timer(0.1, self._publish_joint_states)
 
-        # ── MoveIt2 service client (on separate callback group) ──
+        # MoveIt2 service clients
         self.cartesian_path_client = self.create_client(
             GetCartesianPath, "/compute_cartesian_path",
             callback_group=self._service_cb_group)
-
-        # ── Scene service client ──
+        # /apply_planning_scene client kept for reference; scene_publisher.py
+        # actually publishes the collision scene on startup.
         self.apply_scene_client = self.create_client(
             ApplyPlanningScene, '/apply_planning_scene',
             callback_group=self._service_cb_group)
@@ -253,6 +261,8 @@ class UR3DrawingNode(Node):
         self.get_logger().info(f"[Config] MoveIt2 max_step={self.max_step} m, "
                                f"jump_threshold={self.jump_threshold}")
 
+        # File mode auto-fires after a short delay. Topic mode waits for
+        # GUI's START:<colour> (no auto-start — that broke colour selection).
         if self.stroke_source == "file":
             self.create_timer(2.0, self._file_startup_timer)
         else:
@@ -262,9 +272,7 @@ class UR3DrawingNode(Node):
     # ─────────────────── callbacks ───────────────────
 
     def _publish_joint_states(self):
-        """Publish current planned joint positions on /joint_states at 10 Hz.
-        This keeps MoveIt2 and RViz synchronized with our planned state,
-        preventing the phantom robot issue."""
+        """10 Hz /joint_states pub — keeps RViz/MoveIt2 in sync with our plan."""
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = JOINT_NAMES
@@ -272,10 +280,13 @@ class UR3DrawingNode(Node):
         self.joint_state_pub.publish(msg)
 
     def _file_startup_timer(self):
-        """One-shot timer callback for file-based stroke source."""
+        """One-shot 2 s delay so MoveIt2 is up before file-mode auto-starts."""
         self._start_pipeline_thread()
 
     def _on_drawing_strokes(self, msg: String):
+        """Cache strokes from perception. Does NOT auto-start drawing —
+        GUI's START:<colour> is the only trigger (auto-start used to fire
+        before the user picked a colour, hence the bug)."""
         try:
             strokes = json.loads(msg.data)
         except json.JSONDecodeError as e:
@@ -286,14 +297,10 @@ class UR3DrawingNode(Node):
             f"({sum(len(s) for s in strokes)} pts) — "
             f"waiting for GUI START to begin drawing")
         self._topic_strokes = strokes
-        # NOTE: do NOT auto-start the pipeline here. Auto-starting makes
-        # the drawing run with the default colour ('black') the moment
-        # perception publishes strokes — *before* the user has clicked
-        # "Start Drawing" in the GUI and chosen a colour. The pipeline
-        # is now triggered exclusively by the START:<colour> command in
-        # _on_gui_command, so the chosen colour is always honoured.
 
     def _on_gui_colour(self, msg: String):
+        """Supplementary colour topic. START:<colour> is authoritative;
+        this is here for debug tools / direct `ros2 topic pub` use."""
         colour = msg.data.strip().lower()
         if colour not in COLOUR_TO_MARKER:
             self.get_logger().warn(
@@ -305,11 +312,13 @@ class UR3DrawingNode(Node):
             f"(slot {COLOUR_TO_MARKER[colour]+1}/{MARKER_COUNT})")
 
     def _on_gui_command(self, msg: String):
+        """GUI commands on /gui/command. Accepts:
+          START:<colour> — begin drawing (only way to trigger a run)
+          START          — fallback, uses last-known colour
+          PAUSE / RESUME / STOP — forwarded to /drawing_status (no live cancel yet)
+        """
         raw = msg.data.strip()
         self.get_logger().info(f"[GUI] >>> Received raw command: '{raw}'")
-        # Allow "START:<colour>" so the colour selection is atomic with
-        # the start command (avoids the race where the separate colour
-        # topic message hasn't been processed yet when START fires).
         if ":" in raw:
             cmd, _, payload = raw.partition(":")
             cmd = cmd.upper()
@@ -349,7 +358,8 @@ class UR3DrawingNode(Node):
             self._publish_status("RESUMED")
 
     def _start_pipeline_thread(self):
-        """Run the pipeline on a background thread so service calls don't deadlock."""
+        """Run the pipeline on a background thread so MoveIt2 service
+        waits don't starve subscribers (joint state, GUI, etc.)."""
         if self._pipeline_thread is not None and self._pipeline_thread.is_alive():
             self.get_logger().warn("[Pipeline] Already running, ignoring")
             return
@@ -357,9 +367,11 @@ class UR3DrawingNode(Node):
             target=self._on_startup_complete, daemon=True)
         self._pipeline_thread.start()
 
-    # ─────────────────── pipeline ───────────────────
+    # ─────────────────── pipeline (background thread) ───────────────────
 
     def _on_startup_complete(self):
+        """5-stage drawing pipeline. Status strings are published at each
+        stage so the GUI can update its progress display."""
         if self._startup_done:
             return
         self._startup_done = True
@@ -368,7 +380,7 @@ class UR3DrawingNode(Node):
             self.get_logger().info("[Pipeline] Starting ...")
             self._publish_status("LOADING_STROKES")
 
-            # 1 – Load strokes
+            # Stage 1 — load strokes (from cached topic or from disk)
             strokes = self._load_strokes()
             if not strokes:
                 self._publish_status("ERROR_LOAD_FAILED")
@@ -377,23 +389,22 @@ class UR3DrawingNode(Node):
                 f"[Stage 1] {len(strokes)} strokes, "
                 f"{sum(len(s) for s in strokes)} pts")
 
-            # 2 – Scale + Optimise
+            # Stage 2 — scale + reorder (NN + 2-Opt)
             self._publish_status("OPTIMIZING_PATH")
             strokes = self._optimize_strokes(strokes)
 
-            # 3 – Scene objects already applied by add_table node (launched earlier)
-            #     Skip redundant publish to avoid spin deadlock.
+            # Stage 3 — scene was set up by scene_publisher.py at launch.
             self._publish_status("SETTING_UP_SCENE")
-            self.get_logger().info("[Scene] Using collision objects from add_table node")
+            self.get_logger().info("[Scene] Using collision objects from scene_publisher node")
 
-            # 4 – Plan each stroke via MoveIt2 Cartesian path
+            # Stage 4 — plan with MoveIt2 + build URScript
             self._publish_status("PLANNING_WITH_MOVEIT2")
             script = self._plan_and_build_urscript(strokes)
             if script is None:
                 self._publish_status("ERROR_PLANNING_FAILED")
                 return
 
-            # 5 – Execute URScript
+            # Stage 5 — ship URScript to the robot over TCP
             self._publish_status("EXECUTING")
             success = self._send_urscript(script)
 
@@ -412,6 +423,7 @@ class UR3DrawingNode(Node):
     # ─────────────────── stage 1: load ───────────────────
 
     def _load_strokes(self):
+        """Topic mode → use cached strokes. File mode → load face*_strokes.json."""
         if self.stroke_source == "topic":
             if self._topic_strokes is not None:
                 return self._topic_strokes
@@ -435,9 +447,12 @@ class UR3DrawingNode(Node):
     # ─────────────────── stage 2: optimise ───────────────────
 
     def _optimize_strokes(self, strokes):
+        """Scale to canvas + reorder via NN + 2-Opt (from motion_planning_lib).
+        Falls back to the raw strokes on any error."""
         if not self.enable_optimization or not IMPORTS_OK:
             return strokes
         try:
+            # Normalise to float tuples (perception may send ints).
             strokes_f = [[(float(x), float(y)) for x, y in s] for s in strokes]
             strokes_f = scale_strokes_to_workspace(strokes_f)
             metrics = Metrics()
@@ -445,6 +460,7 @@ class UR3DrawingNode(Node):
             metrics.raw_waypoint_count = sum(len(s) for s in strokes_f)
             metrics.raw_travel_distance = _calculate_travel(strokes_f)
 
+            # NN for a quick decent ordering, then 2-Opt to refine.
             nn = nearest_neighbour_sort(strokes_f, metrics=metrics)
             opt = two_opt_improve(nn, max_iterations=50, metrics=metrics)
 
@@ -476,7 +492,8 @@ class UR3DrawingNode(Node):
         return False
 
     def _publish_scene_objects(self):
-        """Apply table and marker-holder collision objects via service."""
+        """Unused — scene_publisher.py handles this at launch time.
+        Kept here as a fallback for in-node testing."""
 
         # Table
         table = CollisionObject()
@@ -529,7 +546,7 @@ class UR3DrawingNode(Node):
     # ─────────────────── stage 4: MoveIt2 plan → URScript ───────
 
     def _make_pose(self, xyz, quat=None):
-        """Helper: create geometry_msgs/Pose from xyz array and quaternion."""
+        """Pose for /compute_cartesian_path. Defaults to TOOL_QUAT (marker 1)."""
         if quat is None:
             quat = TOOL_QUAT
         p = Pose()
@@ -539,10 +556,9 @@ class UR3DrawingNode(Node):
 
     def _call_cartesian_path(self, waypoints: List[Pose],
                              start_joints: List[float]) -> Tuple:
-        """
-        Call /compute_cartesian_path and return (joint_trajectory, fraction).
-        Returns (None, 0.0) on failure.
-        """
+        """Call /compute_cartesian_path with collision avoidance ON.
+        Returns (joint_trajectory, fraction) or (None, 0.0) on failure.
+        `fraction` is the proportion of waypoints MoveIt2 could interpolate."""
         if not self.cartesian_path_client.wait_for_service(timeout_sec=5.0):
             self.get_logger().error("[Plan] /compute_cartesian_path service not available")
             return None, 0.0
@@ -557,7 +573,7 @@ class UR3DrawingNode(Node):
         req.jump_threshold = self.jump_threshold
         req.avoid_collisions = True
 
-        # Provide start state so MoveIt knows current joint config
+        # Start state = where the robot currently is, not some default.
         req.start_state.joint_state.name = JOINT_NAMES
         req.start_state.joint_state.position = [float(j) for j in start_joints]
 
@@ -583,15 +599,10 @@ class UR3DrawingNode(Node):
         return traj, fraction
 
     def _thin_trajectory(self, traj_points, is_draw=False, max_joint_delta=0.05):
-        """
-        Thin a MoveIt2 joint trajectory while preserving collision safety.
-
-        For travel/lift: keep only the final point (single movej at Z_TRAVEL).
-        For drawing: keep ALL MoveIt2-planned points to preserve the exact
-                     collision-free Cartesian path.  Previously, aggressive
-                     thinning caused joint-space shortcuts that made the
-                     end-effector deviate (up/down oscillations).
-        """
+        """Pick which trajectory points to emit as URScript movejs.
+        Travel/lift → just the endpoint (short, fast).
+        Drawing → every point (anything less causes joint-space shortcuts
+                  that lift the pen mid-stroke)."""
         n = len(traj_points)
         if n == 0:
             return []
@@ -607,14 +618,16 @@ class UR3DrawingNode(Node):
         return [list(pt.positions) for pt in traj_points]
 
     def _plan_and_build_urscript(self, strokes) -> str:
-        """
-        For each stroke, plan a collision-free trajectory via MoveIt2,
-        then use the actual planned joint positions in URScript movej commands.
-        This ensures the robot follows MoveIt2's collision-free path.
+        """Heart of the node: strokes → URScript.
+
+        For each stroke we plan 3 segments via MoveIt2 — travel, draw, lift —
+        thin the trajectories, collect them into `all_segments`, then
+        post-process wrist_3 (colour offset + prepended rotate-to-marker movej)
+        and serialise to URScript in _build_urscript.
         """
 
-        all_segments = []  # list of (joint_positions_list, is_travel, comment)
-        current_joints = list(HOME_JOINTS)
+        all_segments = []  # (joint_positions, is_travel, comment) tuples
+        current_joints = list(HOME_JOINTS)  # MoveIt2 start state, updated each stroke
         total_strokes = len(strokes)
         skipped = 0
 
@@ -728,9 +741,9 @@ class UR3DrawingNode(Node):
             for joints, is_travel, comment in all_segments:
                 new_joints = list(joints)
                 w = new_joints[5] + wrist_3_offset
-                while w < -2.0 * math.pi:
+                while w < -math.pi:
                     w += 2.0 * math.pi
-                while w > 2.0 * math.pi:
+                while w > math.pi:
                     w -= 2.0 * math.pi
                 new_joints[5] = w
                 shifted.append((new_joints, is_travel, comment))
@@ -741,9 +754,9 @@ class UR3DrawingNode(Node):
             # the operator). Other joints stay at HOME, only wrist_3 moves.
             rotated_home = list(HOME_JOINTS)
             w = HOME_JOINTS[5] + wrist_3_offset
-            while w < -2.0 * math.pi:
+            while w < -math.pi:
                 w += 2.0 * math.pi
-            while w > 2.0 * math.pi:
+            while w > math.pi:
                 w -= 2.0 * math.pi
             rotated_home[5] = w
             self.get_logger().info(
@@ -762,17 +775,22 @@ class UR3DrawingNode(Node):
         return self._build_urscript(all_segments)
 
     def _build_urscript(self, segments) -> str:
-        """Build a complete URScript program from MoveIt2-planned joint waypoints."""
+        """Serialise joint waypoints to a URScript program.
+        Travel/lift movejs use JOINT_VEL/ACCEL.
+        Draw movejs use slower a=0.5/v=0.3 with a small blend radius
+        (r=0.002) for smooth lines — but the LAST draw point of a stroke
+        has no blend so the robot stops cleanly before lifting."""
         lines = []
-        # NOTE: Script must start with 'def' — no leading comments.
-        # Some CB3 firmware silently rejects scripts with text before 'def'.
+        # Must start with `def` — some CB3 firmwares reject scripts with
+        # any text (including comments) before that line.
         lines.append("def draw_face():")
+        # set_tcp tells the robot where the marker TIP is (not the flange).
         lines.append(f"  set_tcp(p[{TCP_OFFSET[0]:.4f},{TCP_OFFSET[1]:.4f},"
                      f"{TCP_OFFSET[2]:.4f},{TCP_OFFSET[3]:.4f},"
                      f"{TCP_OFFSET[4]:.4f},{TCP_OFFSET[5]:.4f}])")
         lines.append("")
 
-        # Home via joint move (safe from any position)
+        # Start at HOME so we begin from a known pose.
         home_str = ",".join(f"{j:.4f}" for j in HOME_JOINTS)
         lines.append(f"  movej([{home_str}], a={JOINT_ACCEL}, v={JOINT_VEL})")
         lines.append("")
@@ -780,11 +798,9 @@ class UR3DrawingNode(Node):
         for idx, (joints, is_travel, comment) in enumerate(segments):
             j_str = ",".join(f"{j:.4f}" for j in joints)
             if is_travel:
-                # Travel/lift: faster joint-space move, no blend
                 lines.append(f"  movej([{j_str}], a={JOINT_ACCEL}, v={JOINT_VEL})")
             else:
-                # Drawing: use blend radius for smooth continuous motion
-                # except for the very last drawing point (blend=0 to stop precisely)
+                # Last draw point = next segment is travel/lift (or this is the end).
                 is_last_draw = (idx + 1 >= len(segments) or segments[idx + 1][1])
                 if is_last_draw:
                     lines.append(f"  movej([{j_str}], a=0.5, v=0.3)")
@@ -792,6 +808,7 @@ class UR3DrawingNode(Node):
                     lines.append(f"  movej([{j_str}], a=0.5, v=0.3, r=0.002)")
 
         lines.append("")
+        # Return to HOME — also undoes the wrist_3 colour offset.
         lines.append(f"  movej([{home_str}], a={JOINT_ACCEL}, v={JOINT_VEL})")
         lines.append("end")
         return "\n".join(lines)
@@ -799,9 +816,10 @@ class UR3DrawingNode(Node):
     # ─────────────────── stage 5: execute ───────────────────
 
     def _send_urscript(self, script: str) -> bool:
-        """Send URScript to the robot over TCP socket."""
-
-        # Always save the script for inspection / manual replay
+        """Send the script to UR3/Polyscope on TCP port 30002.
+        Also saved to outputs/last_drawing.script for inspection/replay.
+        Returns True if the bytes were sent; actual motion must be
+        confirmed visually (or in Polyscope's VNC viewer)."""
         save_path = os.path.expanduser("~/RS2/outputs/last_drawing.script")
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         with open(save_path, "w") as f:
@@ -868,12 +886,17 @@ class UR3DrawingNode(Node):
     # ─────────────────── helpers ───────────────────
 
     def _publish_status(self, status: str):
+        """Emit pipeline state on /drawing_status (consumed by GUI).
+        States: WAITING_FOR_PERCEPTION, LOADING_STROKES, OPTIMIZING_PATH,
+        SETTING_UP_SCENE, PLANNING_WITH_MOVEIT2, EXECUTING, COMPLETE, ERROR_*"""
         msg = String()
         msg.data = status
         self.status_pub.publish(msg)
 
 
 def main(args=None):
+    """Entry point (`motion_planning_node` in setup.py). MultiThreadedExecutor
+    so the planning thread can block on MoveIt2 without starving subscribers."""
     rclpy.init(args=args)
     node = UR3DrawingNode()
     executor = MultiThreadedExecutor(num_threads=4)
